@@ -78,9 +78,8 @@ class ReadFileTool(Tool):
             selected = lines[offset:offset + limit]
             result = "\n".join(selected)
 
-            end = offset + len(selected)
-            if end < total_lines:
-                result += f"\n\n[Showing lines {offset}-{end - 1} of {total_lines}. Use offset={end} to read more.]"
+            if total_lines > limit:
+                result += f"\n\n[{total_lines} lines total]"
 
             return result
         except PermissionError as e:
