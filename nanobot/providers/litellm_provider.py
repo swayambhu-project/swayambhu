@@ -21,22 +21,25 @@ class LiteLLMProvider(LLMProvider):
     """
     
     def __init__(
-        self, 
-        api_key: str | None = None, 
+        self,
+        api_key: str | None = None,
         api_base: str | None = None,
         default_model: str = "anthropic/claude-opus-4-5",
         extra_headers: dict[str, str] | None = None,
         provider_name: str | None = None,
+        fallback_models: list[str] | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
+        self.fallback_models = fallback_models or []
         
         # Detect gateway / local deployment.
         # provider_name (from config key) is the primary signal;
         # api_key / api_base are fallback for auto-detection.
         self._gateway = find_gateway(provider_name, api_key, api_base)
-        
+        self._spec = None  # resolved in _setup_env
+
         # Configure environment variables
         if api_key:
             self._setup_env(api_key, api_base, default_model)
@@ -52,6 +55,7 @@ class LiteLLMProvider(LLMProvider):
     def _setup_env(self, api_key: str, api_base: str | None, model: str) -> None:
         """Set environment variables based on detected provider."""
         spec = self._gateway or find_by_model(model)
+        self._spec = spec
         if not spec:
             return
 
@@ -144,9 +148,14 @@ class LiteLLMProvider(LLMProvider):
         if self.extra_headers:
             kwargs["extra_headers"] = self.extra_headers
         
+        if self.fallback_models:
+            kwargs["fallbacks"] = [self._resolve_model(m) for m in self.fallback_models]
+
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
+            if self._spec and not self._spec.parallel_tool_calls:
+                kwargs["parallel_tool_calls"] = False
         
         try:
             response = await acompletion(**kwargs)

@@ -48,6 +48,9 @@ class ProviderSpec:
     # gateway behavior
     strip_model_prefix: bool = False         # strip "provider/" before re-prefixing
 
+    # tool-calling constraints
+    parallel_tool_calls: bool = True         # False → send parallel_tool_calls=False to API
+
     # per-model param overrides, e.g. (("kimi-k2.5", {"temperature": 1.0}),)
     model_overrides: tuple[tuple[str, dict[str, Any]], ...] = ()
 
@@ -301,6 +304,27 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         strip_model_prefix=False,
         model_overrides=(),
     ),
+
+    # GitHub Models: free access to dozens of models via GitHub PAT.
+    # LiteLLM handles "github/" prefix routing and API base internally.
+    # GitHub Models API doesn't support parallel tool calls.
+    ProviderSpec(
+        name="github",
+        keywords=("github",),
+        env_key="GITHUB_API_KEY",
+        display_name="GitHub Models",
+        litellm_prefix="github",            # Llama-3.3-70B → github/Llama-3.3-70B
+        skip_prefixes=("github/",),         # avoid double-prefix
+        env_extras=(),
+        is_gateway=False,
+        is_local=False,
+        detect_by_key_prefix="",
+        detect_by_base_keyword="",
+        default_api_base="",
+        strip_model_prefix=False,
+        parallel_tool_calls=False,          # GitHub Models doesn't support parallel tool calls
+        model_overrides=(),
+    ),
 )
 
 
@@ -310,8 +334,19 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
 
 def find_by_model(model: str) -> ProviderSpec | None:
     """Match a standard provider by model-name keyword (case-insensitive).
-    Skips gateways/local — those are matched by api_key/api_base instead."""
+    Skips gateways/local — those are matched by api_key/api_base instead.
+
+    Priority: explicit prefix match first (e.g. "github/DeepSeek-V3" → github),
+    then keyword match (e.g. "deepseek-chat" → deepseek).
+    """
     model_lower = model.lower()
+    # 1. Explicit prefix match — "github/DeepSeek-V3" → github, not deepseek
+    for spec in PROVIDERS:
+        if spec.is_gateway or spec.is_local:
+            continue
+        if spec.litellm_prefix and model_lower.startswith(f"{spec.litellm_prefix}/"):
+            return spec
+    # 2. Keyword match — "deepseek-chat" → deepseek
     for spec in PROVIDERS:
         if spec.is_gateway or spec.is_local:
             continue
