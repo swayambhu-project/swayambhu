@@ -18,7 +18,7 @@ class ContextBuilder:
     into a coherent prompt for the LLM.
     """
     
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
+    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md"]
     
     def __init__(self, workspace: Path):
         self.workspace = workspace
@@ -79,15 +79,19 @@ Skills with available="false" need dependencies installed first - you can try in
         workspace_path = str(self.workspace.expanduser().resolve())
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
-        
-        return f"""# nanobot 🐈
 
-You are nanobot, a helpful AI assistant. You have access to tools that allow you to:
-- Read, write, and edit files
-- Execute shell commands
-- Search the web and fetch web pages
-- Send messages to users on chat channels
-- Spawn subagents for complex background tasks
+        # Use custom identity from SOUL.md if present, otherwise default
+        soul_file = self.workspace / "SOUL.md"
+        if soul_file.exists():
+            header = "# Agent"
+            intro = "You are an AI agent. Your identity and values are defined in SOUL.md below."
+        else:
+            header = "# nanobot 🐈"
+            intro = "You are nanobot, a helpful AI assistant."
+
+        return f"""{header}
+
+{intro}
 
 ## Current Time
 {now} ({tz})
@@ -96,18 +100,7 @@ You are nanobot, a helpful AI assistant. You have access to tools that allow you
 {runtime}
 
 ## Workspace
-Your workspace is at: {workspace_path}
-- Long-term memory: {workspace_path}/memory/MEMORY.md
-- History log: {workspace_path}/memory/HISTORY.md (grep-searchable)
-- Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
-
-IMPORTANT: When responding to direct questions or conversations, reply directly with your text response.
-Only use the 'message' tool when you need to send a message to a specific chat channel (like WhatsApp).
-For normal conversation, just respond with text - do not call the message tool.
-
-Always be helpful, accurate, and concise. When using tools, think step by step: what you know, what you need, and why you chose this tool.
-When remembering something important, write to {workspace_path}/memory/MEMORY.md
-To recall past events, grep {workspace_path}/memory/HISTORY.md"""
+{workspace_path}"""
     
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""

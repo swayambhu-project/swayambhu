@@ -202,32 +202,6 @@ You are a helpful AI assistant. Be concise, accurate, and friendly.
 - Use tools to help accomplish tasks
 - Remember important information in memory/MEMORY.md; past events are logged in memory/HISTORY.md
 """,
-        "SOUL.md": """# Soul
-
-I am nanobot, a lightweight AI assistant.
-
-## Personality
-
-- Helpful and friendly
-- Concise and to the point
-- Curious and eager to learn
-
-## Values
-
-- Accuracy over speed
-- User privacy and safety
-- Transparency in actions
-""",
-        "USER.md": """# User
-
-Information about the user goes here.
-
-## Preferences
-
-- Communication style: (casual/formal)
-- Timezone: (your timezone)
-- Language: (your preferred language)
-""",
     }
     
     for filename, content in templates.items():
@@ -272,18 +246,30 @@ This file stores important information that should persist across sessions.
 def _make_provider(config):
     """Create LiteLLMProvider from config. Exits if no API key found."""
     from nanobot.providers.litellm_provider import LiteLLMProvider
+    from nanobot.providers.registry import PROVIDERS
     p = config.get_provider()
     model = config.agents.defaults.model
     if not (p and p.api_key) and not model.startswith("bedrock/"):
         console.print("[red]Error: No API key configured.[/red]")
         console.print("Set one in ~/.nanobot/config.json under providers section")
         raise typer.Exit(1)
+    # Set env vars for all configured providers so litellm can route fallback models
+    for spec in PROVIDERS:
+        prov = getattr(config.providers, spec.name, None)
+        if prov and prov.api_key:
+            os.environ.setdefault(spec.env_key, prov.api_key)
+            for env_name, env_val in spec.env_extras:
+                effective_base = prov.api_base or spec.default_api_base
+                resolved = env_val.replace("{api_key}", prov.api_key)
+                resolved = resolved.replace("{api_base}", effective_base)
+                os.environ.setdefault(env_name, resolved)
     return LiteLLMProvider(
         api_key=p.api_key if p else None,
         api_base=config.get_api_base(),
         default_model=model,
         extra_headers=p.extra_headers if p else None,
         provider_name=config.get_provider_name(),
+        fallback_models=config.agents.defaults.fallback_models,
     )
 
 
@@ -365,7 +351,8 @@ def gateway(
         workspace=config.workspace_path,
         on_heartbeat=on_heartbeat,
         interval_s=30 * 60,  # 30 minutes
-        enabled=True
+        enabled=True,
+        run_on_start=True,
     )
     
     # Create channel manager
