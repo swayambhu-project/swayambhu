@@ -40,11 +40,6 @@ cat > "$CONFIG_FILE" << EOF
 }
 EOF
 
-# Authenticate gh CLI if token is available
-if [ -n "$GH_TOKEN" ]; then
-  echo "$GH_TOKEN" | gh auth login --with-token 2>/dev/null && \
-    echo "gh CLI authenticated" || \
-    echo "gh CLI auth failed (non-fatal)"
-fi
+# gh CLI auto-detects GH_TOKEN env var — no login needed
 
 echo "Swayambhu environment ready."
