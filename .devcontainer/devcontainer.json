@@ -1,0 +1,19 @@
+{
+  "name": "Swayambhu",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "postCreateCommand": "pip install -e . && bash .devcontainer/setup.sh",
+
+  "secrets": {
+    "GH_MODELS_API_KEY": {
+      "description": "GitHub PAT for Models API (fine-grained, Models read-only)"
+    },
+    "GH_TOKEN": {
+      "description": "GitHub PAT for repo/pages/workflow access (classic, repo scope)"
+    }
+  }
+}

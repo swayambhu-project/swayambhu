@@ -311,7 +311,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     ProviderSpec(
         name="github",
         keywords=("github",),
-        env_key="GITHUB_API_KEY",
+        env_key="GH_MODELS_API_KEY",
         display_name="GitHub Models",
         litellm_prefix="github",            # Llama-3.3-70B → github/Llama-3.3-70B
         skip_prefixes=("github/",),         # avoid double-prefix
