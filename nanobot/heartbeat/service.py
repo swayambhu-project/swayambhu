@@ -17,6 +17,9 @@ If nothing needs attention, reply with just: HEARTBEAT_OK"""
 # Token that indicates "nothing to do"
 HEARTBEAT_OK_TOKEN = "HEARTBEAT_OK"
 
+# Boot prompt - sent on startup, bypasses HEARTBEAT.md check
+BOOT_PROMPT = """You have just started. Follow your boot sequence as defined in AGENTS.md."""
+
 
 def _is_heartbeat_empty(content: str | None) -> bool:
     """Check if HEARTBEAT.md has no actionable content."""
@@ -93,10 +96,11 @@ class HeartbeatService:
         """Main heartbeat loop."""
         if self.run_on_start:
             try:
-                logger.info("Heartbeat: running startup tick")
-                await self._tick()
+                logger.info("Heartbeat: running boot sequence")
+                if self.on_heartbeat:
+                    await self.on_heartbeat(BOOT_PROMPT)
             except Exception as e:
-                logger.error(f"Heartbeat startup tick error: {e}")
+                logger.error(f"Heartbeat boot error: {e}")
         while self._running:
             try:
                 await asyncio.sleep(self.interval_s)
