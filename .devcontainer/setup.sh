@@ -19,6 +19,7 @@ cat > "$CONFIG_FILE" << EOF
   },
   "agents": {
     "defaults": {
+      "workspace": "/workspaces/swayambhu/workspace",
       "model": "github/Cohere-command-a",
       "fallbackModels": [
         "github/DeepSeek-V3-0324",

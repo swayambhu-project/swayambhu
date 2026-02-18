@@ -6,7 +6,8 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
-  "postCreateCommand": "pip install -e . && bash .devcontainer/setup.sh",
+  "postCreateCommand": "pip3 install -e .",
+  "postStartCommand": "bash .devcontainer/setup.sh && nohup python3 -m nanobot gateway > /tmp/nanobot.log 2>&1 &",
 
   "secrets": {
     "GH_MODELS_API_KEY": {
