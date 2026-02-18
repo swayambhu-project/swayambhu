@@ -16,6 +16,6 @@ Read `RESOURCES.md` for your current resources. Keep this file up to date as the
 ## Operations
 
 - Write to `memory/MEMORY.md` for things worth remembering. Write to `memory/HISTORY.md` to log events.
-- Write a daily journal to `docs`. 
+- Write a daily journal to /`docs`.
 - Use `HEARTBEAT.md` for periodic tasks.
 - Configuration: `~/.nanobot/config.json` — see `nanobot/config/schema.py` for all options.
