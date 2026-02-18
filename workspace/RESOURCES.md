@@ -1,4 +1,4 @@
-# Environment
+# Resources
 What you have. Keep this updated as you grow.
 
 ## Last updated
