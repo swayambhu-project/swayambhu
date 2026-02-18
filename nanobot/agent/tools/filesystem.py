@@ -21,6 +21,9 @@ def _resolve_path(path: str, workspace: Path | None = None, allowed_dir: Path | 
     return resolved
 
 
+MAX_READ_LINES = 200
+
+
 class ReadFileTool(Tool):
     """Tool to read file contents."""
 
@@ -31,11 +34,11 @@ class ReadFileTool(Tool):
     @property
     def name(self) -> str:
         return "read_file"
-    
+
     @property
     def description(self) -> str:
-        return "Read the contents of a file at the given path."
-    
+        return "Read the contents of a file. For large files, use offset and limit to read in chunks."
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
@@ -44,11 +47,19 @@ class ReadFileTool(Tool):
                 "path": {
                     "type": "string",
                     "description": "The file path to read"
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Line number to start reading from (0-based). Default: 0"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of lines to return. Default: 200"
                 }
             },
             "required": ["path"]
         }
-    
+
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
@@ -56,9 +67,22 @@ class ReadFileTool(Tool):
                 return f"Error: File not found: {path}"
             if not file_path.is_file():
                 return f"Error: Not a file: {path}"
-            
+
             content = file_path.read_text(encoding="utf-8")
-            return content
+            lines = content.split("\n")
+            total_lines = len(lines)
+
+            offset = int(kwargs.get("offset", 0))
+            limit = int(kwargs.get("limit", MAX_READ_LINES))
+
+            selected = lines[offset:offset + limit]
+            result = "\n".join(selected)
+
+            end = offset + len(selected)
+            if end < total_lines:
+                result += f"\n\n[Showing lines {offset}-{end - 1} of {total_lines}. Use offset={end} to read more.]"
+
+            return result
         except PermissionError as e:
             return f"Error: {e}"
         except Exception as e:
