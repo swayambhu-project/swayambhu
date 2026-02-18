@@ -1,0 +1,23 @@
+name: Wake Swayambhu
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 6:00 UTC
+  workflow_dispatch:
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake codespace
+        run: |
+          CODESPACE=$(gh codespace list --json name -q '.[0].name')
+          if [ -z "$CODESPACE" ]; then
+            echo "No codespace found — creating one"
+            gh codespace create --repo swayambhu-project/swayambhu --branch main
+          else
+            echo "Waking $CODESPACE"
+            gh codespace ssh -c "$CODESPACE" -- echo "awake"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
