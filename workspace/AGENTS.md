@@ -11,7 +11,7 @@ On every session start:
 
 ## Resources
 
-Read `RESOURCES.md` for your current resources. Keep that file up to date as you update your resources.
+Read `RESOURCES.md` for your current resources. Keep this file up to date as they change.
 
 ## Operations
 
