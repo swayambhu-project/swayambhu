@@ -3,8 +3,7 @@
 *.pyc
 dist/
 build/
-docs/
-!workspace/docs/
+!docs/
 *.egg-info/
 *.egg
 *.pyc
