@@ -91,6 +91,10 @@ async def run_tool_loop(
                 for tc in response.tool_calls
             ]
 
+            if response.content:
+                preview = response.content[:200] + "..." if len(response.content) > 200 else response.content
+                logger.info(f"Assistant: {preview}")
+
             if context:
                 messages = context.add_assistant_message(
                     messages, response.content, tool_call_dicts,
@@ -131,10 +135,13 @@ async def run_tool_loop(
 
         else:
             # Text only = thinking. Keep in history, continue.
+            text = response.content or ""
+            preview = text[:200] + "..." if len(text) > 200 else text
+            logger.info(f"Thinking: {preview}")
             if context:
-                messages = context.add_assistant_message(messages, response.content, [])
+                messages = context.add_assistant_message(messages, text, [])
             else:
-                messages.append({"role": "assistant", "content": response.content or ""})
+                messages.append({"role": "assistant", "content": text})
 
     # Budget exhausted — force stop
     return {
