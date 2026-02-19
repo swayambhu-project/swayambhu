@@ -231,8 +231,7 @@ class AgentLoop:
 
         # No outbound message — the model communicates via the message tool during the loop
         return None
-        )
-    
+
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
         """
         Process a system message (e.g., subagent announce).
