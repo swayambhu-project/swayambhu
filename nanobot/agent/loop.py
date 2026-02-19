@@ -223,23 +223,14 @@ class AgentLoop:
             context=self.context,
         )
         await self._handle_stop(stop_result)
-        final_content = stop_result.get("reason", "Session ended.")
-        
-        # Log response preview
-        preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
-        logger.info(f"Response to {msg.channel}:{msg.sender_id}: {preview}")
-        
-        # Save to session (include tool names so consolidation sees what happened)
+        logger.info(f"Session stopped: {stop_result.get('reason', 'unknown')}")
+
+        # Save user message to session (stop reason is internal, not saved as assistant message)
         session.add_message("user", msg.content)
-        session.add_message("assistant", final_content,
-                            tools_used=tools_used if tools_used else None)
         self.sessions.save(session)
-        
-        return OutboundMessage(
-            channel=msg.channel,
-            chat_id=msg.chat_id,
-            content=final_content,
-            metadata=msg.metadata or {},  # Pass through for channel-specific needs (e.g. Slack thread_ts)
+
+        # No outbound message — the model communicates via the message tool during the loop
+        return None
         )
     
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
@@ -297,18 +288,13 @@ class AgentLoop:
             context=self.context,
         )
         await self._handle_stop(stop_result)
-        final_content = stop_result.get("reason", "Background task completed.")
-        
-        # Save to session (mark as system message in history)
+        logger.info(f"System session stopped: {stop_result.get('reason', 'unknown')}")
+
+        # Save system message to session (stop reason is internal)
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
-        session.add_message("assistant", final_content)
         self.sessions.save(session)
-        
-        return OutboundMessage(
-            channel=origin_channel,
-            chat_id=origin_chat_id,
-            content=final_content
-        )
+
+        return None
     
     async def _handle_stop(self, stop_result: dict) -> None:
         """Handle session stop: write memory and schedule wake if requested."""
