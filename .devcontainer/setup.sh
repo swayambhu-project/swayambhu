@@ -34,7 +34,9 @@ cat > "$CONFIG_FILE" << EOF
         "github/Ministral-3B"
       ],
       "maxTokens": 4000,
-      "memoryWindow": 20
+      "memoryWindow": 20,
+      "maxRequestsPerSession": 25,
+      "maxSessionMinutes": 10
     }
   }
 }

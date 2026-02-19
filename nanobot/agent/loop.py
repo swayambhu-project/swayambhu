@@ -11,6 +11,7 @@ from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 from nanobot.agent.context import ContextBuilder
+from nanobot.agent.engine import run_tool_loop
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from nanobot.agent.tools.shell import ExecTool
@@ -18,6 +19,7 @@ from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.cron import CronTool
+from nanobot.agent.tools.stop import StopTool
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.subagent import SubagentManager
 from nanobot.session.manager import SessionManager
@@ -41,7 +43,8 @@ class AgentLoop:
         provider: LLMProvider,
         workspace: Path,
         model: str | None = None,
-        max_iterations: int = 20,
+        max_iterations: int = 25,
+        max_minutes: int | None = None,
         memory_window: int = 50,
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
@@ -55,7 +58,8 @@ class AgentLoop:
         self.provider = provider
         self.workspace = workspace
         self.model = model or provider.get_default_model()
-        self.max_iterations = max_iterations
+        self.max_requests = max_iterations  # budget: max LLM API calls per session
+        self.max_minutes = max_minutes  # budget: max session duration
         self.memory_window = memory_window
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
@@ -109,6 +113,9 @@ class AgentLoop:
         # Cron tool (for scheduling)
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
+
+        # Stop tool (session termination — intercepted by engine, never executed)
+        self.tools.register(StopTool())
     
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
@@ -206,60 +213,17 @@ class AgentLoop:
         )
         
         # Agent loop
-        iteration = 0
-        final_content = None
-        tools_used: list[str] = []
-        
-        while iteration < self.max_iterations:
-            iteration += 1
-            
-            # Call LLM
-            response = await self.provider.chat(
-                messages=messages,
-                tools=self.tools.get_definitions(),
-                model=self.model
-            )
-            
-            # Handle tool calls
-            if response.has_tool_calls:
-                # Add assistant message with tool calls
-                tool_call_dicts = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments)  # Must be JSON string
-                        }
-                    }
-                    for tc in response.tool_calls
-                ]
-                messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts,
-                    reasoning_content=response.reasoning_content,
-                )
-                
-                # Execute tools
-                for tool_call in response.tool_calls:
-                    tools_used.append(tool_call.name)
-                    args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                    logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
-                    messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
-                    )
-                # Interleaved CoT: reflect before next action
-                messages.append({"role": "user", "content": "Reflect on the results and decide next steps."})
-            else:
-                # No tool calls, we're done
-                final_content = response.content
-                break
-        
-        if final_content is None:
-            if iteration >= self.max_iterations:
-                final_content = f"Reached {self.max_iterations} iterations without completion."
-            else:
-                final_content = "I've completed processing but have no response to give."
+        stop_result, messages, tools_used = await run_tool_loop(
+            provider=self.provider,
+            messages=messages,
+            tools=self.tools,
+            model=self.model,
+            max_requests=self.max_requests,
+            max_minutes=self.max_minutes,
+            context=self.context,
+        )
+        await self._handle_stop(stop_result)
+        final_content = stop_result.get("reason", "Session ended.")
         
         # Log response preview
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
@@ -322,51 +286,18 @@ class AgentLoop:
             chat_id=origin_chat_id,
         )
         
-        # Agent loop (limited for announce handling)
-        iteration = 0
-        final_content = None
-        
-        while iteration < self.max_iterations:
-            iteration += 1
-            
-            response = await self.provider.chat(
-                messages=messages,
-                tools=self.tools.get_definitions(),
-                model=self.model
-            )
-            
-            if response.has_tool_calls:
-                tool_call_dicts = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments)
-                        }
-                    }
-                    for tc in response.tool_calls
-                ]
-                messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts,
-                    reasoning_content=response.reasoning_content,
-                )
-                
-                for tool_call in response.tool_calls:
-                    args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                    logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
-                    messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
-                    )
-                # Interleaved CoT: reflect before next action
-                messages.append({"role": "user", "content": "Reflect on the results and decide next steps."})
-            else:
-                final_content = response.content
-                break
-        
-        if final_content is None:
-            final_content = "Background task completed."
+        # Agent loop
+        stop_result, messages, _ = await run_tool_loop(
+            provider=self.provider,
+            messages=messages,
+            tools=self.tools,
+            model=self.model,
+            max_requests=self.max_requests,
+            max_minutes=self.max_minutes,
+            context=self.context,
+        )
+        await self._handle_stop(stop_result)
+        final_content = stop_result.get("reason", "Background task completed.")
         
         # Save to session (mark as system message in history)
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
@@ -379,6 +310,58 @@ class AgentLoop:
             content=final_content
         )
     
+    async def _handle_stop(self, stop_result: dict) -> None:
+        """Handle session stop: write memory and schedule wake if requested."""
+        memory = MemoryStore(self.workspace)
+
+        # Append session summary to HISTORY.md
+        reason = stop_result.get("reason", "unknown")
+        next_steps = stop_result.get("next_steps", "")
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+        memory.append_history(f"[{ts}] Session stopped: {reason}. Next: {next_steps}")
+
+        # Write next_steps to MEMORY.md
+        if next_steps:
+            current = memory.read_long_term()
+            marker = "## Next Steps"
+            # Replace existing next-steps section or append
+            if marker in current:
+                before = current.split(marker)[0].rstrip()
+                updated = f"{before}\n\n{marker}\n{next_steps}\n"
+            else:
+                updated = f"{current}\n\n{marker}\n{next_steps}\n" if current else f"{marker}\n{next_steps}\n"
+            memory.write_long_term(updated)
+
+        # Schedule wake if requested
+        wake_after = stop_result.get("wake_after")
+        if wake_after and self.cron_service:
+            try:
+                ms = self._parse_duration_ms(wake_after)
+                import time
+                from nanobot.cron.types import CronSchedule
+                at_ms = int(time.time() * 1000) + ms
+                self.cron_service.add_job(
+                    name=f"wake: {next_steps[:50]}",
+                    schedule=CronSchedule(kind="at", at_ms=at_ms),
+                    message=f"Waking up. Previous session stopped: {reason}. Plan: {next_steps}",
+                    delete_after_run=True,
+                )
+                logger.info(f"Scheduled wake in {wake_after} (at_ms={at_ms})")
+            except Exception as e:
+                logger.warning(f"Failed to schedule wake_after={wake_after!r}: {e}")
+
+    @staticmethod
+    def _parse_duration_ms(s: str) -> int:
+        """Parse a duration string like '30m', '6h', '1d' to milliseconds."""
+        s = s.strip().lower()
+        multipliers = {"m": 60_000, "h": 3_600_000, "d": 86_400_000, "s": 1_000}
+        for suffix, mult in multipliers.items():
+            if s.endswith(suffix):
+                return int(float(s[:-len(suffix)]) * mult)
+        # Fallback: assume minutes
+        return int(float(s) * 60_000)
+
     async def _consolidate_memory(self, session, archive_all: bool = False) -> None:
         """Consolidate old messages into MEMORY.md + HISTORY.md, then trim session."""
         if not session.messages:

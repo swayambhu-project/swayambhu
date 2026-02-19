@@ -100,7 +100,13 @@ Skills with available="false" need dependencies installed first - you can try in
 {runtime}
 
 ## Workspace
-{workspace_path}"""
+{workspace_path}
+
+## Session
+Your session is a cycle of acting and thinking. After each action you see
+the result and decide what to do next. When you are done — or need to pause —
+call the stop tool with your reason, next steps, and when to wake up.
+A response without a tool call is you thinking — take your time, then act."""
     
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""
