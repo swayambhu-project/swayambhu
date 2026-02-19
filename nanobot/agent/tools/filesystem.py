@@ -75,11 +75,18 @@ class ReadFileTool(Tool):
             offset = int(kwargs.get("offset", 0))
             limit = int(kwargs.get("limit", MAX_READ_LINES))
 
+            if offset >= total_lines:
+                return f"Error: offset {offset} is past end of file ({total_lines} lines, valid range 0-{total_lines - 1})."
+
             selected = lines[offset:offset + limit]
+            end = offset + len(selected)
             result = "\n".join(selected)
 
-            if total_lines > offset + limit:
-                result += f"\n\n[Showing lines {offset+1}-{offset+len(selected)} of {total_lines}. Use offset={offset+limit} to read the next chunk.]"
+            if end < total_lines:
+                remaining = total_lines - end
+                result += f"\n\n[Lines {offset + 1}-{end} of {total_lines}. CONTINUE: use offset={end}, {remaining} lines remaining.]"
+            else:
+                result += f"\n\n[Lines {offset + 1}-{end} of {total_lines}. END OF FILE reached.]"
 
             return result
         except PermissionError as e:

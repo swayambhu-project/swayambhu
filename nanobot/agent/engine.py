@@ -9,6 +9,7 @@ from loguru import logger
 BUDGET_WARNING = "Budget low. Wrap up and stop."
 REFLECT_PROMPT = "Reflect on the results and decide next steps."
 MAX_CONTEXT_CHARS = 20_000  # rough limit before trimming old tool results
+READ_ONLY_TOOLS = frozenset({"read_file", "list_dir", "web_search", "web_fetch"})
 
 
 def _trim_tool_results(messages: list[dict], max_chars: int = MAX_CONTEXT_CHARS) -> list[dict]:
@@ -131,7 +132,10 @@ async def run_tool_loop(
                     })
 
             # Interleaved CoT — helps weak models pause and think
-            messages.append({"role": "user", "content": REFLECT_PROMPT})
+            # Skip reflect after read-only batches to save budget
+            batch_names = {tc.name for tc in response.tool_calls}
+            if not batch_names.issubset(READ_ONLY_TOOLS):
+                messages.append({"role": "user", "content": REFLECT_PROMPT})
 
         else:
             # Text only = thinking. Keep in history, continue.

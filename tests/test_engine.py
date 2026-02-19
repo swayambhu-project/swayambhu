@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from nanobot.agent.engine import run_tool_loop, BUDGET_WARNING, REFLECT_PROMPT
+from nanobot.agent.engine import run_tool_loop, BUDGET_WARNING, REFLECT_PROMPT, READ_ONLY_TOOLS
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.stop import StopTool
 from nanobot.agent.tools.registry import ToolRegistry
@@ -37,6 +37,29 @@ class EchoTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         return kwargs["text"]
+
+
+class FakeReadFileTool(Tool):
+    """Mock read_file tool (name matches READ_ONLY_TOOLS)."""
+
+    @property
+    def name(self) -> str:
+        return "read_file"
+
+    @property
+    def description(self) -> str:
+        return "Fake read_file"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        }
+
+    async def execute(self, **kwargs: Any) -> str:
+        return "file contents"
 
 
 class MockProvider:
@@ -320,6 +343,68 @@ async def test_context_builder_used_when_provided():
 
     assert len(ctx.assistant_calls) >= 1
     assert len(ctx.tool_result_calls) >= 1
+
+
+# ── Selective reflect tests ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_read_only_tool_skips_reflect():
+    """Reflect prompt is NOT injected after read-only tool calls."""
+    provider = MockProvider([
+        tool_response([tc("read_file", {"path": "foo.txt"})]),
+        stop_response("done", "next"),
+    ])
+    tools = make_registry(FakeReadFileTool(), StopTool())
+    messages = [{"role": "user", "content": "read it"}]
+
+    stop_result, msgs, tools_used = await run_tool_loop(
+        provider, messages, tools, model="test",
+    )
+
+    assert "read_file" in tools_used
+    reflect_msgs = [m for m in msgs if m.get("content") == REFLECT_PROMPT]
+    assert len(reflect_msgs) == 0
+
+
+@pytest.mark.asyncio
+async def test_write_tool_gets_reflect():
+    """Reflect prompt IS injected after non-read-only tool calls."""
+    provider = MockProvider([
+        tool_response([tc("echo", {"text": "hi"})]),
+        stop_response("done", "next"),
+    ])
+    tools = make_registry(EchoTool(), StopTool())
+    messages = [{"role": "user", "content": "go"}]
+
+    stop_result, msgs, tools_used = await run_tool_loop(
+        provider, messages, tools, model="test",
+    )
+
+    assert "echo" in tools_used
+    reflect_msgs = [m for m in msgs if m.get("content") == REFLECT_PROMPT]
+    assert len(reflect_msgs) == 1
+
+
+@pytest.mark.asyncio
+async def test_mixed_batch_gets_reflect():
+    """A batch with both read-only and non-read-only tools gets reflect."""
+    provider = MockProvider([
+        tool_response([
+            tc("read_file", {"path": "foo.txt"}, id="t1"),
+            tc("echo", {"text": "hi"}, id="t2"),
+        ]),
+        stop_response("done", "next"),
+    ])
+    tools = make_registry(FakeReadFileTool(), EchoTool(), StopTool())
+    messages = [{"role": "user", "content": "go"}]
+
+    stop_result, msgs, tools_used = await run_tool_loop(
+        provider, messages, tools, model="test",
+    )
+
+    reflect_msgs = [m for m in msgs if m.get("content") == REFLECT_PROMPT]
+    assert len(reflect_msgs) == 1
 
 
 # ── _parse_duration_ms tests ─────────────────────────────────────────
