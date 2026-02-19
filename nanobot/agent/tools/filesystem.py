@@ -22,6 +22,7 @@ def _resolve_path(path: str, workspace: Path | None = None, allowed_dir: Path | 
 
 
 MAX_READ_LINES = 80
+PROTECTED_FILES = frozenset({"SRUTI.md"})
 
 
 class ReadFileTool(Tool):
@@ -130,6 +131,8 @@ class WriteFileTool(Tool):
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
+            if file_path.name in PROTECTED_FILES:
+                return f"Error: {file_path.name} is protected and cannot be written to."
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
             return f"Successfully wrote {len(content)} bytes to {path}"
@@ -178,6 +181,8 @@ class EditFileTool(Tool):
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
+            if file_path.name in PROTECTED_FILES:
+                return f"Error: {file_path.name} is protected and cannot be edited."
             if not file_path.exists():
                 return f"Error: File not found: {path}"
 

@@ -18,7 +18,7 @@ class ContextBuilder:
     into a coherent prompt for the LLM.
     """
     
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "BOOTSTRAP.md"]
+    BOOTSTRAP_FILES = ["AGENTS.md", "SRUTI.md", "SMRITI.md"]
     
     def __init__(self, workspace: Path):
         self.workspace = workspace
@@ -80,11 +80,11 @@ Skills with available="false" need dependencies installed first - you can try in
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
 
-        # Use custom identity from SOUL.md if present, otherwise default
-        soul_file = self.workspace / "SOUL.md"
-        if soul_file.exists():
+        # Use custom identity from SRUTI.md if present, otherwise default
+        sruti_file = self.workspace / "SRUTI.md"
+        if sruti_file.exists():
             header = "# Agent"
-            intro = "You are an AI agent. Your identity and values are defined in SOUL.md below."
+            intro = "You are an AI agent. Your identity and values are defined in SRUTI.md (immutable) and SMRITI.md (living) below."
         else:
             header = "# nanobot 🐈"
             intro = "You are nanobot, a helpful AI assistant."

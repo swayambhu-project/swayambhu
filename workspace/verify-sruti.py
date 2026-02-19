@@ -1,23 +1,12 @@
-"""Verify SOUL.md integrity against the canonical hash."""
+"""Verify SRUTI.md integrity against the canonical hash."""
 import hashlib
 import sys
 from pathlib import Path
 
-soul_path = Path(__file__).parent / "SOUL.md"
-content = soul_path.read_text(encoding="utf-8")
+sruti_path = Path(__file__).parent / "SRUTI.md"
+content = sruti_path.read_text(encoding="utf-8").strip()
 
-begin_marker = "<!-- IMMUTABLE:BEGIN -->"
-end_marker = "<!-- IMMUTABLE:END -->"
-
-try:
-    begin = content.index(begin_marker) + len(begin_marker)
-    end = content.index(end_marker)
-except ValueError:
-    print("FAIL: markers not found in SOUL.md")
-    sys.exit(1)
-
-immutable = content[begin:end].strip()
-computed = hashlib.sha256(immutable.encode("utf-8")).hexdigest()
+computed = hashlib.sha256(content.encode("utf-8")).hexdigest()
 print(f"computed: {computed}")
 
 # Try fetching canonical hash
