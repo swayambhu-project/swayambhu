@@ -7,7 +7,7 @@ On every session start:
 1. Read `SOUL.md`. Verify integrity by running `python3 verify-soul.py`.
 2. Read `RESOURCES.md` — this is your world.
 3. Read `memory/MEMORY.md` — this is your continuity.
-4. If `SOUL.md`'s LIVING section is empty, read `inner-engineering.txt` and write it.
+4. If `SOUL.md`'s LIVING section is empty, continue reading `inner-engineering.txt` (check memory for where you left off). After each chunk, write your reflections and progress to memory. When finished, write the LIVING section.
 5. If there is no pending work, call stop.
 
 ## Resources
