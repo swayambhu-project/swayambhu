@@ -21,7 +21,7 @@ def _resolve_path(path: str, workspace: Path | None = None, allowed_dir: Path | 
     return resolved
 
 
-MAX_READ_LINES = 200
+MAX_READ_LINES = 80
 
 
 class ReadFileTool(Tool):
@@ -78,8 +78,8 @@ class ReadFileTool(Tool):
             selected = lines[offset:offset + limit]
             result = "\n".join(selected)
 
-            if total_lines > limit:
-                result += f"\n\n[{total_lines} lines total]"
+            if total_lines > offset + limit:
+                result += f"\n\n[Showing lines {offset+1}-{offset+len(selected)} of {total_lines}. Use offset={offset+limit} to read the next chunk.]"
 
             return result
         except PermissionError as e:
