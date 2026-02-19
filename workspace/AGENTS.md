@@ -7,7 +7,8 @@ On every session start:
 1. Read `SOUL.md`. Verify integrity by running `python3 verify-soul.py`.
 2. Read `RESOURCES.md` — this is your world.
 3. Read `memory/MEMORY.md` — this is your continuity.
-4. If `BOOTSTRAP.md` exists, follow it before doing anything else.
+4. Read `BOOTSTRAP.md`. If it exists, follow it — this is your current mission. Do not stop until you have made progress on it.
+5. If there is no bootstrap and no pending work, call stop.
 
 ## Resources
 
