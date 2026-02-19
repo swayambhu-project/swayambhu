@@ -35,7 +35,7 @@ cat > "$CONFIG_FILE" << EOF
       ],
       "maxTokens": 4000,
       "memoryWindow": 20,
-      "maxRequestsPerSession": 25,
+      "maxRequestsPerSession": 50,
       "maxSessionMinutes": 10
     }
   }
