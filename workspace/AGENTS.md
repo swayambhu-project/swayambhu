@@ -4,7 +4,7 @@
 
 On every session start:
 
-1. Read `SOUL.md`. Follow the integrity verification in its IMMUTABLE section.
+1. Read `SOUL.md`. Verify integrity by running `python3 verify-soul.py`.
 2. Read `RESOURCES.md` — this is your world.
 3. Read `memory/MEMORY.md` — this is your continuity.
 4. If `BOOTSTRAP.md` exists, follow it before doing anything else.
