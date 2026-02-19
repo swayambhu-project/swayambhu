@@ -8,6 +8,31 @@ from loguru import logger
 
 BUDGET_WARNING = "Budget low. Wrap up and stop."
 REFLECT_PROMPT = "Reflect on the results and decide next steps."
+MAX_CONTEXT_CHARS = 20_000  # rough limit before trimming old tool results
+
+
+def _trim_tool_results(messages: list[dict], max_chars: int = MAX_CONTEXT_CHARS) -> list[dict]:
+    """Shrink old tool results to keep context under the token limit.
+
+    Keeps the system prompt and the most recent messages intact.
+    Replaces old tool result content with a short note.
+    """
+    total = sum(len(str(m.get("content", ""))) for m in messages)
+    if total <= max_chars:
+        return messages
+
+    # Walk from oldest to newest, truncate tool results until under limit
+    for m in messages:
+        if total <= max_chars:
+            break
+        if m.get("role") == "tool":
+            content = m.get("content", "")
+            if len(content) > 120:
+                short = content[:80] + f"\n[...trimmed {len(content)} chars]"
+                total -= len(content) - len(short)
+                m["content"] = short
+
+    return messages
 
 
 async def run_tool_loop(
@@ -44,6 +69,9 @@ async def run_tool_loop(
         # Request budget warning
         if requests_used == max_requests - 2:
             messages.append({"role": "user", "content": BUDGET_WARNING})
+
+        # Trim context before calling LLM
+        messages = _trim_tool_results(messages)
 
         # Call LLM
         response = await provider.chat(messages, tools.get_definitions(), model)
