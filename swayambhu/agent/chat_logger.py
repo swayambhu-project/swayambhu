@@ -49,15 +49,19 @@ class ChatLogger:
         message_count: int,
         tool_count: int,
         reasoning_effort: str | None,
+        last_user_content: str | None = None,
     ) -> None:
-        self._write({
+        entry: dict[str, Any] = {
             "type": "llm_request",
             "request_num": request_num,
             "model": model,
             "message_count": message_count,
             "tool_count": tool_count,
             "reasoning_effort": reasoning_effort,
-        })
+        }
+        if last_user_content is not None:
+            entry["last_user_content"] = last_user_content[:2000]
+        self._write(entry)
 
     def log_response(
         self,

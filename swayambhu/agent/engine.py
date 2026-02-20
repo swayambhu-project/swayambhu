@@ -85,9 +85,15 @@ async def run_tool_loop(
 
         # Log request
         if chat_logger:
+            # Find last user message for the transcript
+            last_user = next(
+                (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
+                None,
+            )
             chat_logger.log_request(
                 requests_used + 1, model, len(messages),
                 len(tools.get_definitions()), next_reasoning,
+                last_user_content=last_user,
             )
 
         # Call LLM
