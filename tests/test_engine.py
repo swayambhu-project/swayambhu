@@ -433,3 +433,92 @@ class TestParseDurationMs:
 
     def test_whitespace(self):
         assert AgentLoop._parse_duration_ms("  30m  ") == 1_800_000
+
+
+# ── Reasoning toggle tests ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_reasoning_off_for_routine_calls():
+    """When reasoning_effort is set, routine calls pass reasoning_effort='none'."""
+    call_kwargs: list[dict] = []
+
+    class KwargsCapturingProvider(MockProvider):
+        async def chat(self, messages, tools=None, model=None, **kwargs):
+            call_kwargs.append(kwargs)
+            return await super().chat(messages, tools, model, **kwargs)
+
+    provider = KwargsCapturingProvider([
+        tool_response([tc("read_file", {"path": "foo.txt"})]),
+        stop_response("done", "next"),
+    ])
+    tools = make_registry(FakeReadFileTool(), StopTool())
+    messages = [{"role": "user", "content": "read it"}]
+
+    await run_tool_loop(
+        provider, messages, tools, model="test",
+        reasoning_effort="medium",
+    )
+
+    assert len(call_kwargs) == 2
+    # First call (routine read): reasoning off
+    assert call_kwargs[0]["reasoning_effort"] == "none"
+    # Second call (after read-only batch, no reflect): still "none"
+    assert call_kwargs[1]["reasoning_effort"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_on_for_reflect():
+    """After non-read-only tool batch, the reflect call uses configured reasoning_effort."""
+    call_kwargs: list[dict] = []
+
+    class KwargsCapturingProvider(MockProvider):
+        async def chat(self, messages, tools=None, model=None, **kwargs):
+            call_kwargs.append(kwargs)
+            return await super().chat(messages, tools, model, **kwargs)
+
+    provider = KwargsCapturingProvider([
+        tool_response([tc("echo", {"text": "hi"})]),  # non-read-only → reflect
+        stop_response("done", "next"),                 # reflect call with reasoning ON
+    ])
+    tools = make_registry(EchoTool(), StopTool())
+    messages = [{"role": "user", "content": "go"}]
+
+    await run_tool_loop(
+        provider, messages, tools, model="test",
+        reasoning_effort="medium",
+    )
+
+    assert len(call_kwargs) == 2
+    # First call (routine): reasoning off
+    assert call_kwargs[0]["reasoning_effort"] == "none"
+    # Second call (reflect after write): reasoning at configured level
+    assert call_kwargs[1]["reasoning_effort"] == "medium"
+
+
+@pytest.mark.asyncio
+async def test_no_reasoning_param_when_not_configured():
+    """When reasoning_effort is None, no reasoning parameter is passed."""
+    call_kwargs: list[dict] = []
+
+    class KwargsCapturingProvider(MockProvider):
+        async def chat(self, messages, tools=None, model=None, **kwargs):
+            call_kwargs.append(kwargs)
+            return await super().chat(messages, tools, model, **kwargs)
+
+    provider = KwargsCapturingProvider([
+        tool_response([tc("echo", {"text": "hi"})]),
+        stop_response("done", "next"),
+    ])
+    tools = make_registry(EchoTool(), StopTool())
+    messages = [{"role": "user", "content": "go"}]
+
+    await run_tool_loop(
+        provider, messages, tools, model="test",
+        # reasoning_effort not passed (defaults to None)
+    )
+
+    assert len(call_kwargs) == 2
+    # Neither call should have a reasoning_effort key
+    for kw in call_kwargs:
+        assert kw.get("reasoning_effort") is None

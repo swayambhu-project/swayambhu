@@ -110,6 +110,7 @@ class LiteLLMProvider(LLMProvider):
         model: str | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.7,
+        reasoning_effort: str | None = None,
     ) -> LLMResponse:
         """
         Send a chat completion request via LiteLLM.
@@ -148,6 +149,9 @@ class LiteLLMProvider(LLMProvider):
         if self.extra_headers:
             kwargs["extra_headers"] = self.extra_headers
         
+        if reasoning_effort is not None:
+            kwargs["reasoning_effort"] = reasoning_effort
+
         if self.fallback_models:
             kwargs["fallbacks"] = [self._resolve_model(m) for m in self.fallback_models]
 

@@ -44,6 +44,7 @@ async def run_tool_loop(
     max_requests: int = 25,
     max_minutes: int | None = None,
     context=None,  # ContextBuilder — uses add_assistant_message/add_tool_result if provided
+    reasoning_effort: str | None = None,  # None = no toggle; "low"/"medium"/"high" for reflect calls
 ) -> tuple[dict | None, list[dict[str, Any]], list[str]]:
     """
     Run the agent tool loop.
@@ -56,6 +57,11 @@ async def run_tool_loop(
     requests_used = 0
     tools_used: list[str] = []
     start_time = time.time()
+
+    # Reasoning toggle: when configured, routine calls use "none" and
+    # reflect calls (after non-read-only tools) use the configured level.
+    can_reason = reasoning_effort is not None
+    next_reasoning: str | None = "none" if can_reason else None
 
     while requests_used < max_requests:
         # Time budget check
@@ -75,8 +81,12 @@ async def run_tool_loop(
         messages = _trim_tool_results(messages)
 
         # Call LLM
-        response = await provider.chat(messages, tools.get_definitions(), model)
+        response = await provider.chat(
+            messages, tools.get_definitions(), model,
+            reasoning_effort=next_reasoning,
+        )
         requests_used += 1
+        next_reasoning = "none" if can_reason else None  # reset to off
 
         if response.has_tool_calls:
             # Add assistant message with tool calls
@@ -136,6 +146,8 @@ async def run_tool_loop(
             batch_names = {tc.name for tc in response.tool_calls}
             if not batch_names.issubset(READ_ONLY_TOOLS):
                 messages.append({"role": "user", "content": REFLECT_PROMPT})
+                if can_reason:
+                    next_reasoning = reasoning_effort  # ON for reflect call
 
         else:
             # Text only = thinking. Keep in history, continue.

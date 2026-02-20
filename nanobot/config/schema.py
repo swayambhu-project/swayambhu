@@ -166,6 +166,7 @@ class AgentDefaults(BaseModel):
     memory_window: int = 50
     max_requests_per_session: int = 25
     max_session_minutes: int | None = None
+    reasoning_effort: str | None = None  # None = no toggle; "low"/"medium"/"high" for reflect calls
 
 
 class AgentsConfig(BaseModel):
