@@ -1,10 +1,10 @@
 #!/bin/bash
 # Swayambhu Codespace setup — runs once after container creation.
-# Generates ~/.nanobot/config.json from Codespace secrets (env vars).
+# Generates ~/.swayambhu/config.json from Codespace secrets (env vars).
 
 set -e
 
-CONFIG_DIR="$HOME/.nanobot"
+CONFIG_DIR="$HOME/.swayambhu"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 
 mkdir -p "$CONFIG_DIR"

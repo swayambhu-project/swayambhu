@@ -3,10 +3,10 @@ from datetime import date
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.email import EmailChannel
-from nanobot.config.schema import EmailConfig
+from swayambhu.bus.events import OutboundMessage
+from swayambhu.bus.queue import MessageBus
+from swayambhu.channels.email import EmailChannel
+from swayambhu.config.schema import EmailConfig
 
 
 def _make_config() -> EmailConfig:

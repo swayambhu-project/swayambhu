@@ -6,11 +6,11 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from nanobot.agent.engine import run_tool_loop, BUDGET_WARNING, REFLECT_PROMPT, READ_ONLY_TOOLS
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.stop import StopTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from swayambhu.agent.engine import run_tool_loop, BUDGET_WARNING, REFLECT_PROMPT, READ_ONLY_TOOLS
+from swayambhu.agent.tools.base import Tool
+from swayambhu.agent.tools.stop import StopTool
+from swayambhu.agent.tools.registry import ToolRegistry
+from swayambhu.providers.base import LLMResponse, ToolCallRequest
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
@@ -409,7 +409,7 @@ async def test_mixed_batch_gets_reflect():
 
 # ── _parse_duration_ms tests ─────────────────────────────────────────
 
-from nanobot.agent.loop import AgentLoop
+from swayambhu.agent.loop import AgentLoop
 
 
 class TestParseDurationMs:

@@ -24,18 +24,18 @@ CLI / Email
 
 ```bash
 pip install -e .
-cp ~/.nanobot/config.json.example ~/.nanobot/config.json
+cp ~/.swayambhu/config.json.example ~/.swayambhu/config.json
 # Add your OpenRouter API key
-nanobot onboard
+swayambhu onboard
 ```
 
 ## Usage
 
 ```bash
-nanobot agent -m "Hello"       # single message
-nanobot agent                  # interactive
-nanobot gateway                # run with email + cron + heartbeat
-nanobot status                 # check config
+swayambhu agent -m "Hello"       # single message
+swayambhu agent                  # interactive
+swayambhu gateway                # run with email + cron + heartbeat
+swayambhu status                 # check config
 ```
 
 ## Identity

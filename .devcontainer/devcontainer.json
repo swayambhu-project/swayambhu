@@ -8,7 +8,7 @@
   },
 
   "postCreateCommand": "pip3 install -e .",
-  "postStartCommand": "bash .devcontainer/setup.sh && nohup python3 -m nanobot gateway > /tmp/nanobot.log 2>&1 &",
+  "postStartCommand": "bash .devcontainer/setup.sh && nohup python3 -m swayambhu gateway > /tmp/swayambhu.log 2>&1 &",
 
   "secrets": {
     "GH_MODELS_API_KEY": {

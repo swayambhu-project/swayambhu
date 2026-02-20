@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from prompt_toolkit.formatted_text import HTML
 
-from nanobot.cli import commands
+from swayambhu.cli import commands
 
 
 @pytest.fixture
