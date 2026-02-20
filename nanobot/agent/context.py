@@ -80,18 +80,9 @@ Skills with available="false" need dependencies installed first - you can try in
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
 
-        # Use custom identity from SOUL.md if present, otherwise default
-        soul_file = self.workspace / "SOUL.md"
-        if soul_file.exists():
-            header = "# Agent"
-            intro = "You are an AI agent. Your identity and values are defined in SOUL.md below."
-        else:
-            header = "# nanobot 🐈"
-            intro = "You are nanobot, a helpful AI assistant."
+        return f"""# Agent
 
-        return f"""{header}
-
-{intro}
+You are an autonomous AI agent. Your identity and values are defined in SOUL.md below.
 
 ## Current Time
 {now} ({tz})
