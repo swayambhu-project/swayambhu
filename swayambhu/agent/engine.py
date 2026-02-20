@@ -45,6 +45,7 @@ async def run_tool_loop(
     max_minutes: int | None = None,
     context=None,  # ContextBuilder — uses add_assistant_message/add_tool_result if provided
     reasoning_effort: str | None = None,  # None = no toggle; "low"/"medium"/"high" for reflect calls
+    chat_logger=None,  # optional ChatLogger for full transcript logging
 ) -> tuple[dict | None, list[dict[str, Any]], list[str]]:
     """
     Run the agent tool loop.
@@ -68,6 +69,8 @@ async def run_tool_loop(
         if max_minutes:
             elapsed = (time.time() - start_time) / 60
             if elapsed >= max_minutes:
+                if chat_logger:
+                    _end_log(chat_logger, requests_used, messages, tools_used)
                 return {
                     "reason": "time_budget_exhausted",
                     "next_steps": "Continue from where I left off",
@@ -80,13 +83,26 @@ async def run_tool_loop(
         # Trim context before calling LLM
         messages = _trim_tool_results(messages)
 
+        # Log request
+        if chat_logger:
+            chat_logger.log_request(
+                requests_used + 1, model, len(messages),
+                len(tools.get_definitions()), next_reasoning,
+            )
+
         # Call LLM
+        t0 = time.time()
         response = await provider.chat(
             messages, tools.get_definitions(), model,
             reasoning_effort=next_reasoning,
         )
+        llm_ms = int((time.time() - t0) * 1000)
         requests_used += 1
         next_reasoning = "none" if can_reason else None  # reset to off
+
+        # Log response
+        if chat_logger:
+            chat_logger.log_response(requests_used, response, llm_ms)
 
         if response.has_tool_calls:
             # Add assistant message with tool calls
@@ -122,12 +138,21 @@ async def run_tool_loop(
             for tc in response.tool_calls:
                 if tc.name == "stop":
                     # Session ends
+                    if chat_logger:
+                        _end_log(chat_logger, requests_used, messages, tools_used)
                     return tc.arguments, messages, tools_used
 
                 tools_used.append(tc.name)
                 args_str = json.dumps(tc.arguments, ensure_ascii=False)
                 logger.info(f"Tool call: {tc.name}({args_str[:200]})")
+                tool_t0 = time.time()
                 result = await tools.execute(tc.name, tc.arguments)
+                tool_ms = int((time.time() - tool_t0) * 1000)
+
+                if chat_logger:
+                    chat_logger.log_tool_exec(
+                        requests_used, tc.name, tc.arguments, result, tool_ms,
+                    )
 
                 if context:
                     messages = context.add_tool_result(
@@ -160,7 +185,18 @@ async def run_tool_loop(
                 messages.append({"role": "assistant", "content": text})
 
     # Budget exhausted — force stop
+    if chat_logger:
+        _end_log(chat_logger, requests_used, messages, tools_used)
     return {
         "reason": "budget_exhausted",
         "next_steps": "Continue from where I left off",
     }, messages, tools_used
+
+
+def _end_log(chat_logger, requests_used: int, messages: list[dict], tools_used: list[str]) -> None:
+    """Compute total tokens from message usage metadata and end the chat log session."""
+    total_tokens = sum(
+        m.get("usage", {}).get("total_tokens", 0)
+        for m in messages if isinstance(m.get("usage"), dict)
+    )
+    chat_logger.end_session(requests_used, total_tokens, tools_used)

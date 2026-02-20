@@ -11,6 +11,7 @@ from swayambhu.bus.events import InboundMessage, OutboundMessage
 from swayambhu.bus.queue import MessageBus
 from swayambhu.providers.base import LLMProvider
 from swayambhu.agent.context import ContextBuilder
+from swayambhu.agent.chat_logger import ChatLogger
 from swayambhu.agent.engine import run_tool_loop
 from swayambhu.agent.tools.registry import ToolRegistry
 from swayambhu.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
@@ -70,6 +71,7 @@ class AgentLoop:
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
+        self.chat_logger = ChatLogger(workspace / "logs" / "chat")
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
             provider=provider,
@@ -215,6 +217,7 @@ class AgentLoop:
         )
         
         # Agent loop
+        self.chat_logger.start_session(key, self.model)
         stop_result, messages, tools_used = await run_tool_loop(
             provider=self.provider,
             messages=messages,
@@ -224,6 +227,7 @@ class AgentLoop:
             max_minutes=self.max_minutes,
             context=self.context,
             reasoning_effort=self.reasoning_effort,
+            chat_logger=self.chat_logger,
         )
         await self._handle_stop(stop_result)
         logger.info(f"Session stopped: {stop_result.get('reason', 'unknown')}")
@@ -280,6 +284,7 @@ class AgentLoop:
         )
         
         # Agent loop
+        self.chat_logger.start_session(session_key, self.model)
         stop_result, messages, _ = await run_tool_loop(
             provider=self.provider,
             messages=messages,
@@ -289,6 +294,7 @@ class AgentLoop:
             max_minutes=self.max_minutes,
             context=self.context,
             reasoning_effort=self.reasoning_effort,
+            chat_logger=self.chat_logger,
         )
         await self._handle_stop(stop_result)
         logger.info(f"System session stopped: {stop_result.get('reason', 'unknown')}")
