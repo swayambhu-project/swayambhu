@@ -108,7 +108,7 @@ class ReadFileTool(Tool):
             return f"Error reading file: {str(e)}"
 
 
-JOURNAL_GUARD_PHASES = frozenset({"wake"})
+JOURNAL_GUARD_PHASES = frozenset({"wake", "act"})
 
 
 class WriteFileTool(Tool):

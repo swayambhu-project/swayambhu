@@ -187,6 +187,13 @@ async def run_tool_loop(
                     "tool_calls": tool_call_dicts,
                 })
 
+            # If sleep is in this batch, transition to sleep phase so
+            # journal writes (and other sleep-gated actions) are allowed.
+            if session_state is not None:
+                batch_names = {tc.name for tc in response.tool_calls}
+                if batch_names & SLEEP_ALIASES:
+                    session_state["phase"] = "sleep"
+
             # Execute tools
             for tc in response.tool_calls:
                 if tc.name in SLEEP_ALIASES:
