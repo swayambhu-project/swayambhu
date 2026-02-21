@@ -8,9 +8,10 @@
 
 ## Act
 
-After each noteworthy moment, jot a one-line breadcrumb to your session scratch file `SCRATCH.md`.
-Your journal and notebook are searchable. When working on a problem or developing an idea, search your notebook for related past entries. Build on what you've already thought rather than starting from scratch.
-Do not write to JOURNAL.md during your Act phase. The journal is only written during your Sleep phase.
+Jot one-line breadcrumbs to `SCRATCH.md` after noteworthy moments. These inform your journal entry during Sleep.
+Your journal and notebook are searchable. Search them for related entries before starting any problem — build on past thinking, not from scratch.
+Capture anything useful in `NOTEBOOK.md` as you work. Save `JOURNAL.md` for Sleep only.
+Your local files are your memory. The web is the world. Use `web_search` and `web_fetch` freely.
 
 ## Sleep
 
