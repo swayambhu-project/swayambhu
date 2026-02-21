@@ -7,7 +7,9 @@ from typing import Any
 from loguru import logger
 
 BUDGET_WARNING = "Budget low. Enter your Sleep phase now."
-REFLECT_PROMPT = "Reflect on the results and decide next steps. Are these aligned with your SOUL?"
+CONTINUE_PROMPT = "Continue."
+SOUL_CHECK_PROMPT = "Continue. Is this aligned with your SOUL?"
+SOUL_CHECK_INTERVAL = 4  # inject SOUL check every N reflect-worthy actions
 IDLE_NUDGE = (
     "You have been thinking without acting. "
     "Either use a tool to make progress, or call sleep to end your session."
@@ -90,6 +92,7 @@ async def run_tool_loop(
     # action, it's stuck. Nudge once, then force-stop.
     idle_tokens = 0
     idle_nudged = False
+    action_count = 0  # reflect-worthy actions since last SOUL check
 
     while requests_used < max_requests:
         # Time budget check
@@ -222,7 +225,12 @@ async def run_tool_loop(
             # Skip reflect when every tool just read internal workspace files (recall).
             # Everything else — web, writes, exec, external reads — gets reflection.
             if _batch_needs_reflect(response.tool_calls):
-                messages.append({"role": "user", "content": REFLECT_PROMPT})
+                action_count += 1
+                if action_count % SOUL_CHECK_INTERVAL == 0:
+                    prompt = SOUL_CHECK_PROMPT
+                else:
+                    prompt = CONTINUE_PROMPT
+                messages.append({"role": "user", "content": prompt})
                 if can_reason:
                     next_reasoning = reflect_reasoning_effort  # ON for reflect call
 
@@ -242,7 +250,7 @@ async def run_tool_loop(
                 (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
                 "",
             )
-            if can_reason and last_user == REFLECT_PROMPT:
+            if can_reason and last_user in (CONTINUE_PROMPT, SOUL_CHECK_PROMPT):
                 next_reasoning = reflect_reasoning_effort
 
             # Idle detection: accumulate text-only tokens

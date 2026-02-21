@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from swayambhu.agent.engine import run_tool_loop, BUDGET_WARNING, REFLECT_PROMPT, READ_ONLY_TOOLS
+from swayambhu.agent.engine import run_tool_loop, BUDGET_WARNING, CONTINUE_PROMPT, SOUL_CHECK_PROMPT
 from swayambhu.agent.tools.base import Tool
 from swayambhu.agent.tools.sleep import SleepTool
 from swayambhu.agent.tools.registry import ToolRegistry
@@ -165,7 +165,7 @@ async def test_tool_execution_with_reflect_prompt():
 
     assert "echo" in tools_used
     # Check reflect prompt was injected
-    reflect_msgs = [m for m in msgs if m.get("content") == REFLECT_PROMPT]
+    reflect_msgs = [m for m in msgs if m.get("content") in (CONTINUE_PROMPT, SOUL_CHECK_PROMPT)]
     assert len(reflect_msgs) == 1
 
 
@@ -349,10 +349,10 @@ async def test_context_builder_used_when_provided():
 
 
 @pytest.mark.asyncio
-async def test_read_only_tool_skips_reflect():
-    """Reflect prompt is NOT injected after read-only tool calls."""
+async def test_workspace_read_skips_reflect():
+    """Reading a workspace file is recall — no reflection needed."""
     provider = MockProvider([
-        tool_response([tc("read_file", {"path": "foo.txt"})]),
+        tool_response([tc("read_file", {"path": "workspace/JOURNAL.md"})]),
         sleep_response("done", "next"),
     ])
     tools = make_registry(FakeReadFileTool(), SleepTool())
@@ -363,8 +363,27 @@ async def test_read_only_tool_skips_reflect():
     )
 
     assert "read_file" in tools_used
-    reflect_msgs = [m for m in msgs if m.get("content") == REFLECT_PROMPT]
+    reflect_msgs = [m for m in msgs if m.get("content") in (CONTINUE_PROMPT, SOUL_CHECK_PROMPT)]
     assert len(reflect_msgs) == 0
+
+
+@pytest.mark.asyncio
+async def test_external_read_gets_reflect():
+    """Reading a file outside workspace is perception — triggers reflection."""
+    provider = MockProvider([
+        tool_response([tc("read_file", {"path": "/tmp/surprise.txt"})]),
+        sleep_response("done", "next"),
+    ])
+    tools = make_registry(FakeReadFileTool(), SleepTool())
+    messages = [{"role": "user", "content": "read it"}]
+
+    stop_result, msgs, tools_used = await run_tool_loop(
+        provider, messages, tools, model="test",
+    )
+
+    assert "read_file" in tools_used
+    reflect_msgs = [m for m in msgs if m.get("content") in (CONTINUE_PROMPT, SOUL_CHECK_PROMPT)]
+    assert len(reflect_msgs) == 1
 
 
 @pytest.mark.asyncio
@@ -382,16 +401,16 @@ async def test_write_tool_gets_reflect():
     )
 
     assert "echo" in tools_used
-    reflect_msgs = [m for m in msgs if m.get("content") == REFLECT_PROMPT]
+    reflect_msgs = [m for m in msgs if m.get("content") in (CONTINUE_PROMPT, SOUL_CHECK_PROMPT)]
     assert len(reflect_msgs) == 1
 
 
 @pytest.mark.asyncio
 async def test_mixed_batch_gets_reflect():
-    """A batch with both read-only and non-read-only tools gets reflect."""
+    """A batch with workspace read + action tool gets reflect."""
     provider = MockProvider([
         tool_response([
-            tc("read_file", {"path": "foo.txt"}, id="t1"),
+            tc("read_file", {"path": "workspace/SCRATCH.md"}, id="t1"),
             tc("echo", {"text": "hi"}, id="t2"),
         ]),
         sleep_response("done", "next"),
@@ -403,7 +422,7 @@ async def test_mixed_batch_gets_reflect():
         provider, messages, tools, model="test",
     )
 
-    reflect_msgs = [m for m in msgs if m.get("content") == REFLECT_PROMPT]
+    reflect_msgs = [m for m in msgs if m.get("content") in (CONTINUE_PROMPT, SOUL_CHECK_PROMPT)]
     assert len(reflect_msgs) == 1
 
 
@@ -449,7 +468,7 @@ async def test_reasoning_off_for_routine_calls():
             return await super().chat(messages, tools, model, **kwargs)
 
     provider = KwargsCapturingProvider([
-        tool_response([tc("read_file", {"path": "foo.txt"})]),
+        tool_response([tc("read_file", {"path": "workspace/JOURNAL.md"})]),
         sleep_response("done", "next"),
     ])
     tools = make_registry(FakeReadFileTool(), SleepTool())
@@ -461,9 +480,9 @@ async def test_reasoning_off_for_routine_calls():
     )
 
     assert len(call_kwargs) == 2
-    # First call (routine read): reasoning off
+    # First call (routine workspace read): reasoning off
     assert call_kwargs[0]["reasoning_effort"] == "none"
-    # Second call (after read-only batch, no reflect): still "none"
+    # Second call (no reflect for workspace recall): still "none"
     assert call_kwargs[1]["reasoning_effort"] == "none"
 
 
