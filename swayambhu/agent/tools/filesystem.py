@@ -21,6 +21,16 @@ def _resolve_path(path: str, workspace: Path | None = None, allowed_dir: Path | 
     return resolved
 
 
+def _short_path(resolved: Path, workspace: Path | None) -> str:
+    """Return path relative to workspace if possible, otherwise absolute."""
+    if workspace:
+        try:
+            return str(resolved.relative_to(workspace.resolve()))
+        except ValueError:
+            pass
+    return str(resolved)
+
+
 MAX_READ_LINES = 80
 
 
