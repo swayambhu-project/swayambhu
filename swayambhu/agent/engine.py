@@ -15,6 +15,7 @@ IDLE_NUDGE = (
 MAX_CONTEXT_CHARS = 20_000  # rough limit before trimming old tool results
 DEFAULT_IDLE_TOKEN_THRESHOLD = 1500  # max text-only tokens before nudge/force-stop
 READ_ONLY_TOOLS = frozenset({"read_file", "list_dir", "web_search", "web_fetch"})
+SLEEP_ALIASES = frozenset({"sleep", "stop", "exit", "quit", "done"})
 
 
 def _trim_tool_results(messages: list[dict], max_chars: int = MAX_CONTEXT_CHARS) -> list[dict]:
@@ -160,8 +161,10 @@ async def run_tool_loop(
 
             # Execute tools
             for tc in response.tool_calls:
-                if tc.name == "sleep":
-                    # Session ends
+                if tc.name in SLEEP_ALIASES:
+                    # Session ends (accept common aliases for sleep)
+                    if tc.name != "sleep":
+                        logger.info(f"Treating '{tc.name}' as sleep")
                     if chat_logger:
                         _end_log(chat_logger, requests_used, messages, tools_used)
                     return tc.arguments, messages, tools_used
