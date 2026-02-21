@@ -2,20 +2,28 @@
   "name": "Swayambhu",
   "image": "mcr.microsoft.com/devcontainers/python:3.12",
 
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/swayambhu,type=bind,consistency=cached",
+  "workspaceFolder": "/workspaces/swayambhu",
+
+  "containerEnv": {
+    "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
+    "REQUESTS_CA_BUNDLE": "/etc/ssl/certs/ca-certificates.crt"
+  },
+
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/devcontainers/features/sshd:1": {}
   },
 
-  "postCreateCommand": "pip3 install -e .",
+  "postCreateCommand": "bash -c 'if [ -f .devcontainer/local-setup.sh ]; then bash .devcontainer/local-setup.sh; else pip3 install -e .; fi'",
   "postStartCommand": "bash .devcontainer/setup.sh && nohup python3 -m swayambhu gateway > /tmp/swayambhu.log 2>&1 &",
 
   "secrets": {
-    "GH_MODELS_API_KEY": {
-      "description": "GitHub PAT for Models API (fine-grained, Models read-only)"
+    "OPENROUTER_API_KEY": {
+      "description": "OpenRouter API key for LLM access"
     },
     "GH_TOKEN": {
-      "description": "GitHub PAT for repo/pages/workflow access (classic, repo scope)"
+      "description": "GitHub PAT for repo/pages/workflow access"
     }
   }
 }

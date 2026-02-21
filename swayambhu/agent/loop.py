@@ -210,7 +210,7 @@ class AgentLoop:
         )
         
         # Clear scratch pad for new session
-        (self.workspace / "scratch.md").write_text("# Scratch\n", encoding="utf-8")
+        (self.workspace / "SCRATCH.md").write_text("# Scratch\n", encoding="utf-8")
 
         # Agent loop
         self.chat_logger.start_session(key, self.model)
@@ -280,7 +280,7 @@ class AgentLoop:
         )
         
         # Clear scratch pad for new session
-        (self.workspace / "scratch.md").write_text("# Scratch\n", encoding="utf-8")
+        (self.workspace / "SCRATCH.md").write_text("# Scratch\n", encoding="utf-8")
 
         # Agent loop
         self.chat_logger.start_session(session_key, self.model)

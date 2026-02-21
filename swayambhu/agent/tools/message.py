@@ -1,4 +1,4 @@
-"""Message tool for sending messages to users."""
+"""Message tool for sending messages to channels."""
 
 from typing import Any, Callable, Awaitable
 
@@ -7,7 +7,7 @@ from swayambhu.bus.events import OutboundMessage
 
 
 class MessageTool(Tool):
-    """Tool to send messages to users on chat channels."""
+    """Tool to send messages on chat channels."""
     
     def __init__(
         self, 
@@ -34,7 +34,7 @@ class MessageTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Send a message to the user. Use this when you want to communicate something."
+        return "Send a message to a channel. Use this to communicate externally."
     
     @property
     def parameters(self) -> dict[str, Any]:

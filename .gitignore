@@ -1,5 +1,8 @@
 .assets
 .env
+.devcontainer/local-setup.sh
+.devcontainer/corp-ca.crt
+CLAUDE.md
 *.pyc
 dist/
 build/

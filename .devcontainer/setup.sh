@@ -4,6 +4,12 @@
 
 set -e
 
+# Load .env from workspace if env vars aren't already set (Codespace secrets vs local)
+WORKSPACE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -z "$OPENROUTER_API_KEY" ] && [ -f "$WORKSPACE_DIR/.env" ]; then
+    source "$WORKSPACE_DIR/.env"
+fi
+
 CONFIG_DIR="$HOME/.swayambhu"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 
@@ -13,30 +19,19 @@ mkdir -p "$CONFIG_DIR"
 cat > "$CONFIG_FILE" << EOF
 {
   "providers": {
-    "github": {
-      "apiKey": "${GH_MODELS_API_KEY}"
+    "openrouter": {
+      "apiKey": "${OPENROUTER_API_KEY}"
     }
   },
   "agents": {
     "defaults": {
       "workspace": "/workspaces/swayambhu/workspace",
-      "model": "github/Cohere-command-a",
-      "fallbackModels": [
-        "github/DeepSeek-V3-0324",
-        "github/Llama-4-Maverick-17B-128E-Instruct-FP8",
-        "github/Llama-4-Scout-17B-16E-Instruct",
-        "github/Meta-Llama-3.1-405B-Instruct",
-        "github/Cohere-command-r-plus-08-2024",
-        "github/Codestral-2501",
-        "github/MAI-DS-R1",
-        "github/Meta-Llama-3.1-8B-Instruct",
-        "github/Cohere-command-r-08-2024",
-        "github/Ministral-3B"
-      ],
-      "maxTokens": 4000,
+      "model": "openrouter/deepseek/deepseek-v3.1-terminus",
+      "maxTokens": 8192,
       "memoryWindow": 20,
       "maxRequestsPerSession": 50,
-      "maxSessionMinutes": 10
+      "maxSessionMinutes": 10,
+      "reasoningEffort": "medium"
     }
   }
 }

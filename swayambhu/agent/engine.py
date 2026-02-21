@@ -6,7 +6,7 @@ from typing import Any
 
 from loguru import logger
 
-BUDGET_WARNING = "Budget low. Wrap up and stop."
+BUDGET_WARNING = "Budget low. Enter your Sleep phase now."
 REFLECT_PROMPT = "Reflect on the results and decide next steps."
 MAX_CONTEXT_CHARS = 20_000  # rough limit before trimming old tool results
 READ_ONLY_TOOLS = frozenset({"read_file", "list_dir", "web_search", "web_fetch"})

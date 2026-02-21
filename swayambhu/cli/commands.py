@@ -221,10 +221,10 @@ You are a helpful AI assistant. Be concise, accurate, and friendly.
             console.print(f"  [dim]Created {filename}[/dim]")
 
     # Create journal, notebook, and scratch files
-    for name in ("journal.md", "notebook.md", "scratch.md"):
+    for name in ("JOURNAL.md", "NOTEBOOK.md", "SCRATCH.md"):
         f = workspace / name
         if not f.exists():
-            f.write_text(f"# {name.removesuffix('.md').title()}\n")
+            f.write_text(f"# {name.removesuffix('.md')}\n")
             console.print(f"  [dim]Created {name}[/dim]")
 
     # Create skills directory for custom skills
