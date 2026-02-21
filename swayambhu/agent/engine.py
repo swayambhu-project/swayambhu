@@ -61,6 +61,7 @@ async def run_tool_loop(
     max_requests: int = 25,
     max_minutes: int | None = None,
     context=None,  # ContextBuilder — uses add_assistant_message/add_tool_result if provided
+    session_state: dict | None = None,  # Shared mutable state visible to tools (e.g. phase)
     reasoning_effort: str | None = None,  # None = no toggle; "low"/"medium"/"high" for routine calls
     reflect_reasoning_effort: str = "high",  # Reasoning level for reflection steps
     idle_token_threshold: int = DEFAULT_IDLE_TOKEN_THRESHOLD,  # Text-only tokens before nudge
@@ -101,6 +102,15 @@ async def run_tool_loop(
                     "reason": "time_budget_exhausted",
                     "next_steps": "Continue from where I left off",
                 }, messages, tools_used
+
+        # Phase tracking (shared with tools via session_state)
+        if session_state is not None:
+            if requests_used == 0:
+                session_state["phase"] = "wake"
+            elif requests_used >= max_requests - 2:
+                session_state["phase"] = "sleep"
+            else:
+                session_state["phase"] = "act"
 
         # Request budget warning
         if requests_used == max_requests - 2:

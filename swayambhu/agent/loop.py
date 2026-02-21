@@ -92,11 +92,15 @@ class AgentLoop:
     
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
+        # Shared session state (mutable dict visible to engine + tools)
+        self._session_state: dict = {}
+
         # File tools (resolve relative paths against workspace)
         allowed_dir = self.workspace if self.restrict_to_workspace else None
-        self.tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-        self.tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-        self.tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
+        read_paths: set[str] = set()
+        self.tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, read_paths=read_paths))
+        self.tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir, read_paths=read_paths, session_state=self._session_state))
+        self.tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir, session_state=self._session_state))
         self.tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
         
         # Shell tool
@@ -228,6 +232,7 @@ class AgentLoop:
             max_requests=self.max_requests,
             max_minutes=self.max_minutes,
             context=self.context,
+            session_state=self._session_state,
             reasoning_effort=self.reasoning_effort,
             reflect_reasoning_effort=self.reflect_reasoning_effort,
             idle_token_threshold=self.idle_token_threshold,
@@ -301,6 +306,7 @@ class AgentLoop:
             max_requests=self.max_requests,
             max_minutes=self.max_minutes,
             context=self.context,
+            session_state=self._session_state,
             reasoning_effort=self.reasoning_effort,
             reflect_reasoning_effort=self.reflect_reasoning_effort,
             idle_token_threshold=self.idle_token_threshold,

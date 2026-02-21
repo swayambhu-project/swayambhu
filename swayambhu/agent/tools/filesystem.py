@@ -27,9 +27,11 @@ MAX_READ_LINES = 80
 class ReadFileTool(Tool):
     """Tool to read file contents."""
 
-    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
+    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None,
+                 read_paths: set[str] | None = None):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
+        self._read_paths = read_paths if read_paths is not None else set()
 
     @property
     def name(self) -> str:
@@ -68,6 +70,7 @@ class ReadFileTool(Tool):
             if not file_path.is_file():
                 return f"Error: Not a file: {path}"
 
+            self._read_paths.add(str(file_path))
             content = file_path.read_text(encoding="utf-8")
             lines = content.split("\n")
             total_lines = len(lines)
@@ -95,12 +98,18 @@ class ReadFileTool(Tool):
             return f"Error reading file: {str(e)}"
 
 
-class WriteFileTool(Tool):
-    """Tool to write content to a file."""
+JOURNAL_GUARD_PHASES = frozenset({"wake", "act"})
 
-    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
+
+class WriteFileTool(Tool):
+    """Tool to write content to a file. Existing files must be read first."""
+
+    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None,
+                 read_paths: set[str] | None = None, session_state: dict | None = None):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
+        self._read_paths = read_paths if read_paths is not None else set()
+        self._session_state = session_state or {}
 
     @property
     def name(self) -> str:
@@ -108,7 +117,7 @@ class WriteFileTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Write content to a file at the given path. Creates parent directories if needed."
+        return "Write content to a file. Creates parent directories if needed. You must read_file first if the file already exists."
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -130,6 +139,11 @@ class WriteFileTool(Tool):
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
+            if file_path.exists() and str(file_path) not in self._read_paths:
+                return f"Error: You must read_file '{path}' before overwriting it."
+            phase = self._session_state.get("phase", "act")
+            if file_path.name == "JOURNAL.md" and phase in JOURNAL_GUARD_PHASES:
+                return "Error: JOURNAL.md can only be written during the Sleep phase."
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
             return f"Successfully wrote {len(content)} bytes to {path}"
@@ -142,9 +156,11 @@ class WriteFileTool(Tool):
 class EditFileTool(Tool):
     """Tool to edit a file by replacing text."""
 
-    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
+    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None,
+                 session_state: dict | None = None):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
+        self._session_state = session_state or {}
 
     @property
     def name(self) -> str:
@@ -180,6 +196,9 @@ class EditFileTool(Tool):
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not file_path.exists():
                 return f"Error: File not found: {path}"
+            phase = self._session_state.get("phase", "act")
+            if file_path.name == "JOURNAL.md" and phase in JOURNAL_GUARD_PHASES:
+                return "Error: JOURNAL.md can only be written during the Sleep phase."
 
             content = file_path.read_text(encoding="utf-8")
             
