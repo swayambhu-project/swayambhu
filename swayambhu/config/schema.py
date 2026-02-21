@@ -36,9 +36,18 @@ class EmailConfig(BaseModel):
     allow_from: list[str] = Field(default_factory=list)  # Allowed sender email addresses
 
 
+class DiscordConfig(BaseModel):
+    """Discord channel configuration."""
+    enabled: bool = False
+    bot_token: str = ""
+    allow_channel_ids: list[str] = Field(default_factory=list)  # If empty, listens on all channels
+    allow_from: list[str] = Field(default_factory=list)  # Discord user IDs
+
+
 class ChannelsConfig(BaseModel):
     """Configuration for chat channels."""
     email: EmailConfig = Field(default_factory=EmailConfig)
+    discord: DiscordConfig = Field(default_factory=DiscordConfig)
 
 
 class AgentDefaults(BaseModel):

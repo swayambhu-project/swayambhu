@@ -6,14 +6,28 @@ set -e
 
 # Load .env from workspace if env vars aren't already set (Codespace secrets vs local)
 WORKSPACE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-if [ -z "$OPENROUTER_API_KEY" ] && [ -f "$WORKSPACE_DIR/.env" ]; then
-    source "$WORKSPACE_DIR/.env"
+if [ -z "$OPENROUTER_API_KEY" ] || [ -z "$DISCORD_BOT_TOKEN" ]; then
+    if [ -f "$WORKSPACE_DIR/.env" ]; then
+        source "$WORKSPACE_DIR/.env"
+    fi
 fi
 
 CONFIG_DIR="$HOME/.swayambhu"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 
 mkdir -p "$CONFIG_DIR"
+
+# Build optional channels JSON block
+CHANNELS_BLOCK=""
+if [ -n "$DISCORD_BOT_TOKEN" ]; then
+    CHANNELS_BLOCK=",
+  \"channels\": {
+    \"discord\": {
+      \"enabled\": true,
+      \"botToken\": \"${DISCORD_BOT_TOKEN}\"
+    }
+  }"
+fi
 
 # Generate config from env vars — secrets stay out of the repo
 cat > "$CONFIG_FILE" << EOF
@@ -33,7 +47,7 @@ cat > "$CONFIG_FILE" << EOF
       "maxSessionMinutes": 10,
       "reasoningEffort": "medium"
     }
-  }
+  }${CHANNELS_BLOCK}
 }
 EOF
 

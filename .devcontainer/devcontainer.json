@@ -24,6 +24,9 @@
     },
     "GH_TOKEN": {
       "description": "GitHub PAT for repo/pages/workflow access"
+    },
+    "DISCORD_BOT_TOKEN": {
+      "description": "Discord bot token for channel support"
     }
   }
 }
