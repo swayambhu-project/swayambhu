@@ -17,19 +17,18 @@ class ContextBuilder:
     into a coherent prompt for the LLM.
     """
     
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md"]
+    PROMPT_FILES = ["SOUL.md", "AGENTS.md"]
     
     def __init__(self, workspace: Path):
         self.workspace = workspace
         self.skills = SkillsLoader(workspace)
     
-    def build_system_prompt(self, skill_names: list[str] | None = None, first_call: bool = True) -> str:
+    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """
-        Build the system prompt from bootstrap files, memory, and skills.
+        Build the system prompt from prompt files, memory, and skills.
 
         Args:
             skill_names: Optional list of skills to include.
-            first_call: If True, include SOUL.md; if False, skip it (already internalized).
 
         Returns:
             Complete system prompt.
@@ -39,11 +38,10 @@ class ContextBuilder:
         # Core identity
         parts.append(self._get_identity())
 
-        # Bootstrap files (skip SOUL.md after first call — it's already internalized)
-        skip = {"SOUL.md"} if not first_call else set()
-        bootstrap = self._load_bootstrap_files(skip=skip)
-        if bootstrap:
-            parts.append(bootstrap)
+        # Prompt files (SOUL.md + AGENTS.md — static for caching)
+        prompt_content = self._load_prompt_files()
+        if prompt_content:
+            parts.append(prompt_content)
         
         # Skills - progressive loading
         # 1. Always-loaded skills: include full content
@@ -94,13 +92,11 @@ the result and decide what to do next. When you are done — or need to pause �
 call the sleep tool with your reason, next steps, and when to wake up.
 A response without a tool call is you thinking — take your time, then act."""
     
-    def _load_bootstrap_files(self, skip: set[str] | None = None) -> str:
-        """Load bootstrap files from workspace, optionally skipping some."""
+    def _load_prompt_files(self) -> str:
+        """Load static prompt files from workspace."""
         parts = []
 
-        for filename in self.BOOTSTRAP_FILES:
-            if skip and filename in skip:
-                continue
+        for filename in self.PROMPT_FILES:
             file_path = self.workspace / filename
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")

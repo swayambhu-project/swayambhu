@@ -14,7 +14,7 @@ IDLE_NUDGE = (
 )
 MAX_CONTEXT_CHARS = 20_000  # rough limit before trimming old tool results
 DEFAULT_IDLE_TOKEN_THRESHOLD = 1500  # max text-only tokens before nudge/force-stop
-READ_ONLY_TOOLS = frozenset({"read_file", "list_dir", "web_search", "web_fetch"})
+WORKSPACE_PREFIXES = ("workspace/", "swayambhu/")  # paths that are "recall" — no reflection needed
 SLEEP_ALIASES = frozenset({"sleep", "stop", "exit", "quit", "done"})
 
 
@@ -40,6 +40,17 @@ def _trim_tool_results(messages: list[dict], max_chars: int = MAX_CONTEXT_CHARS)
                 m["content"] = short
 
     return messages
+
+
+def _batch_needs_reflect(tool_calls) -> bool:
+    """Return True unless every call in the batch is a workspace file read."""
+    for tc in tool_calls:
+        if tc.name not in ("read_file", "list_dir"):
+            return True
+        path = tc.arguments.get("path", "")
+        if not path.startswith(WORKSPACE_PREFIXES):
+            return True
+    return False
 
 
 async def run_tool_loop(
@@ -98,11 +109,9 @@ async def run_tool_loop(
         # Trim context before calling LLM
         messages = _trim_tool_results(messages)
 
-        # Swap system prompt: include SOUL.md only on the first call
+        # Rebuild system prompt (static content — caches well across calls)
         if context and messages and messages[0].get("role") == "system":
-            messages[0]["content"] = context.build_system_prompt(
-                first_call=(requests_used == 0),
-            )
+            messages[0]["content"] = context.build_system_prompt()
 
         # Log request
         if chat_logger:
@@ -200,9 +209,9 @@ async def run_tool_loop(
                     })
 
             # Interleaved CoT — helps weak models pause and think
-            # Skip reflect after read-only batches to save budget
-            batch_names = {tc.name for tc in response.tool_calls}
-            if not batch_names.issubset(READ_ONLY_TOOLS):
+            # Skip reflect when every tool just read internal workspace files (recall).
+            # Everything else — web, writes, exec, external reads — gets reflection.
+            if _batch_needs_reflect(response.tool_calls):
                 messages.append({"role": "user", "content": REFLECT_PROMPT})
                 if can_reason:
                     next_reasoning = reflect_reasoning_effort  # ON for reflect call

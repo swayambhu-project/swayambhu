@@ -18,7 +18,7 @@ If nothing needs attention, reply with just: HEARTBEAT_OK"""
 HEARTBEAT_OK_TOKEN = "HEARTBEAT_OK"
 
 # Boot prompt - sent on startup, bypasses HEARTBEAT.md check
-BOOT_PROMPT = """You have just started. Follow your boot sequence as defined in AGENTS.md."""
+BOOT_PROMPT = """You have just started. Follow your Wake sequence as defined in AGENTS.md."""
 
 
 def _is_heartbeat_empty(content: str | None) -> bool:
