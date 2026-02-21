@@ -469,7 +469,7 @@ async def test_reasoning_off_for_routine_calls():
 
 @pytest.mark.asyncio
 async def test_reasoning_on_for_reflect():
-    """After non-read-only tool batch, the reflect call uses configured reasoning_effort."""
+    """After non-read-only tool batch, the reflect call uses reflect_reasoning_effort."""
     call_kwargs: list[dict] = []
 
     class KwargsCapturingProvider(MockProvider):
@@ -487,13 +487,14 @@ async def test_reasoning_on_for_reflect():
     await run_tool_loop(
         provider, messages, tools, model="test",
         reasoning_effort="medium",
+        reflect_reasoning_effort="high",
     )
 
     assert len(call_kwargs) == 2
     # First call (routine): reasoning off
     assert call_kwargs[0]["reasoning_effort"] == "none"
-    # Second call (reflect after write): reasoning at configured level
-    assert call_kwargs[1]["reasoning_effort"] == "medium"
+    # Second call (reflect after write): uses reflect_reasoning_effort, not reasoning_effort
+    assert call_kwargs[1]["reasoning_effort"] == "high"
 
 
 @pytest.mark.asyncio

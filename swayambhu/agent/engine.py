@@ -44,7 +44,8 @@ async def run_tool_loop(
     max_requests: int = 25,
     max_minutes: int | None = None,
     context=None,  # ContextBuilder — uses add_assistant_message/add_tool_result if provided
-    reasoning_effort: str | None = None,  # None = no toggle; "low"/"medium"/"high" for reflect calls
+    reasoning_effort: str | None = None,  # None = no toggle; "low"/"medium"/"high" for routine calls
+    reflect_reasoning_effort: str = "high",  # Reasoning level for reflection steps
     chat_logger=None,  # optional ChatLogger for full transcript logging
 ) -> tuple[dict | None, list[dict[str, Any]], list[str]]:
     """
@@ -178,7 +179,7 @@ async def run_tool_loop(
             if not batch_names.issubset(READ_ONLY_TOOLS):
                 messages.append({"role": "user", "content": REFLECT_PROMPT})
                 if can_reason:
-                    next_reasoning = reasoning_effort  # ON for reflect call
+                    next_reasoning = reflect_reasoning_effort  # ON for reflect call
 
         else:
             # Text only = thinking. Keep in history, continue.
@@ -189,6 +190,15 @@ async def run_tool_loop(
                 messages = context.add_assistant_message(messages, text, [])
             else:
                 messages.append({"role": "assistant", "content": text})
+
+            # If last user message is a reflect prompt, keep reasoning on
+            # so the model doesn't degenerate on open-ended reflection
+            last_user = next(
+                (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
+                "",
+            )
+            if can_reason and last_user == REFLECT_PROMPT:
+                next_reasoning = reflect_reasoning_effort
 
     # Budget exhausted — force stop
     if chat_logger:

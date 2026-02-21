@@ -51,6 +51,7 @@ class AgentLoop:
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
         reasoning_effort: str | None = None,
+        reflect_reasoning_effort: str = "high",
     ):
         from swayambhu.config.schema import ExecToolConfig
         from swayambhu.cron.service import CronService
@@ -66,6 +67,7 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
         self.reasoning_effort = reasoning_effort
+        self.reflect_reasoning_effort = reflect_reasoning_effort
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -223,6 +225,7 @@ class AgentLoop:
             max_minutes=self.max_minutes,
             context=self.context,
             reasoning_effort=self.reasoning_effort,
+            reflect_reasoning_effort=self.reflect_reasoning_effort,
             chat_logger=self.chat_logger,
         )
         await self._handle_sleep(sleep_result)
@@ -293,6 +296,7 @@ class AgentLoop:
             max_minutes=self.max_minutes,
             context=self.context,
             reasoning_effort=self.reasoning_effort,
+            reflect_reasoning_effort=self.reflect_reasoning_effort,
             chat_logger=self.chat_logger,
         )
         await self._handle_sleep(sleep_result)
