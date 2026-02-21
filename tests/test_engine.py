@@ -8,7 +8,7 @@ import pytest
 
 from swayambhu.agent.engine import run_tool_loop, BUDGET_WARNING, REFLECT_PROMPT, READ_ONLY_TOOLS
 from swayambhu.agent.tools.base import Tool
-from swayambhu.agent.tools.stop import StopTool
+from swayambhu.agent.tools.sleep import SleepTool
 from swayambhu.agent.tools.registry import ToolRegistry
 from swayambhu.providers.base import LLMResponse, ToolCallRequest
 
@@ -95,11 +95,11 @@ def tool_response(calls: list[ToolCallRequest], content: str = "") -> LLMRespons
     return LLMResponse(content=content, tool_calls=calls)
 
 
-def stop_response(reason: str, next_steps: str, wake_after: str | None = None) -> LLMResponse:
+def sleep_response(reason: str, next_steps: str, wake_after: str | None = None) -> LLMResponse:
     args = {"reason": reason, "next_steps": next_steps}
     if wake_after:
         args["wake_after"] = wake_after
-    return tool_response([tc("stop", args)])
+    return tool_response([tc("sleep", args)])
 
 
 # ── Tests ─────────────────────────────────────────────────────────────
@@ -109,9 +109,9 @@ def stop_response(reason: str, next_steps: str, wake_after: str | None = None) -
 async def test_stop_tool_ends_session():
     """Session ends when the model calls the stop tool."""
     provider = MockProvider([
-        stop_response("done", "nothing to do"),
+        sleep_response("done", "nothing to do"),
     ])
-    tools = make_registry(EchoTool(), StopTool())
+    tools = make_registry(EchoTool(), SleepTool())
     messages = [{"role": "user", "content": "hello"}]
 
     stop_result, msgs, tools_used = await run_tool_loop(
@@ -131,9 +131,9 @@ async def test_text_response_resubmitted_as_thinking():
         text_response("Let me think about this..."),
         text_response("I should use the echo tool."),
         tool_response([tc("echo", {"text": "hi"})]),
-        stop_response("done", "finished"),
+        sleep_response("done", "finished"),
     ])
-    tools = make_registry(EchoTool(), StopTool())
+    tools = make_registry(EchoTool(), SleepTool())
     messages = [{"role": "user", "content": "hello"}]
 
     stop_result, msgs, tools_used = await run_tool_loop(
@@ -154,9 +154,9 @@ async def test_tool_execution_with_reflect_prompt():
     """After tool execution, a reflect prompt is injected."""
     provider = MockProvider([
         tool_response([tc("echo", {"text": "hello"})]),
-        stop_response("done", "next"),
+        sleep_response("done", "next"),
     ])
-    tools = make_registry(EchoTool(), StopTool())
+    tools = make_registry(EchoTool(), SleepTool())
     messages = [{"role": "user", "content": "start"}]
 
     stop_result, msgs, tools_used = await run_tool_loop(
@@ -176,7 +176,7 @@ async def test_budget_exhaustion_forces_stop():
     provider = MockProvider([
         text_response(f"thinking {i}") for i in range(5)
     ])
-    tools = make_registry(EchoTool(), StopTool())
+    tools = make_registry(EchoTool(), SleepTool())
     messages = [{"role": "user", "content": "go"}]
 
     stop_result, msgs, tools_used = await run_tool_loop(
@@ -197,7 +197,7 @@ async def test_budget_warning_injected():
         text_response("thinking 3"),
         text_response("thinking 4"),
     ])
-    tools = make_registry(StopTool())
+    tools = make_registry(SleepTool())
     messages = [{"role": "user", "content": "go"}]
 
     stop_result, msgs, tools_used = await run_tool_loop(
@@ -213,9 +213,9 @@ async def test_budget_warning_injected():
 async def test_time_budget_zero_is_disabled():
     """max_minutes=0 is falsy, so time budget is disabled."""
     provider = MockProvider([
-        stop_response("done", "next"),
+        sleep_response("done", "next"),
     ])
-    tools = make_registry(StopTool())
+    tools = make_registry(SleepTool())
     messages = [{"role": "user", "content": "go"}]
 
     stop_result, msgs, tools_used = await run_tool_loop(
@@ -238,7 +238,7 @@ async def test_time_budget_exhaustion():
 
     # Provide enough responses so the mock doesn't run out
     provider = SlowProvider([text_response(f"thinking {i}") for i in range(50)])
-    tools = make_registry(StopTool())
+    tools = make_registry(SleepTool())
     messages = [{"role": "user", "content": "go"}]
 
     # 0.0001 minutes = 6ms. After first 10ms sleep, elapsed > budget.
@@ -256,9 +256,9 @@ async def test_time_budget_exhaustion():
 async def test_stop_tool_with_wake_after():
     """Stop tool can include wake_after parameter."""
     provider = MockProvider([
-        stop_response("pausing", "continue reading", wake_after="30m"),
+        sleep_response("pausing", "continue reading", wake_after="30m"),
     ])
-    tools = make_registry(StopTool())
+    tools = make_registry(SleepTool())
     messages = [{"role": "user", "content": "go"}]
 
     stop_result, msgs, tools_used = await run_tool_loop(
@@ -276,9 +276,9 @@ async def test_multiple_tool_calls_before_stop():
     provider = MockProvider([
         tool_response([tc("echo", {"text": "a"}, id="t1")]),
         tool_response([tc("echo", {"text": "b"}, id="t2")]),
-        stop_response("done", "all echoed"),
+        sleep_response("done", "all echoed"),
     ])
-    tools = make_registry(EchoTool(), StopTool())
+    tools = make_registry(EchoTool(), SleepTool())
     messages = [{"role": "user", "content": "echo twice"}]
 
     stop_result, msgs, tools_used = await run_tool_loop(
@@ -297,10 +297,10 @@ async def test_stop_mixed_with_tool_calls():
     provider = MockProvider([
         tool_response([
             tc("echo", {"text": "before stop"}, id="t1"),
-            tc("stop", {"reason": "done", "next_steps": "n/a"}, id="t2"),
+            tc("sleep", {"reason": "done", "next_steps": "n/a"}, id="t2"),
         ]),
     ])
-    tools = make_registry(EchoTool(), StopTool())
+    tools = make_registry(EchoTool(), SleepTool())
     messages = [{"role": "user", "content": "go"}]
 
     stop_result, msgs, tools_used = await run_tool_loop(
@@ -334,9 +334,9 @@ async def test_context_builder_used_when_provided():
     ctx = FakeContext()
     provider = MockProvider([
         tool_response([tc("echo", {"text": "hi"})], content="calling echo"),
-        stop_response("done", "next"),
+        sleep_response("done", "next"),
     ])
-    tools = make_registry(EchoTool(), StopTool())
+    tools = make_registry(EchoTool(), SleepTool())
     messages = [{"role": "user", "content": "go"}]
 
     await run_tool_loop(provider, messages, tools, model="test", context=ctx)
@@ -353,9 +353,9 @@ async def test_read_only_tool_skips_reflect():
     """Reflect prompt is NOT injected after read-only tool calls."""
     provider = MockProvider([
         tool_response([tc("read_file", {"path": "foo.txt"})]),
-        stop_response("done", "next"),
+        sleep_response("done", "next"),
     ])
-    tools = make_registry(FakeReadFileTool(), StopTool())
+    tools = make_registry(FakeReadFileTool(), SleepTool())
     messages = [{"role": "user", "content": "read it"}]
 
     stop_result, msgs, tools_used = await run_tool_loop(
@@ -372,9 +372,9 @@ async def test_write_tool_gets_reflect():
     """Reflect prompt IS injected after non-read-only tool calls."""
     provider = MockProvider([
         tool_response([tc("echo", {"text": "hi"})]),
-        stop_response("done", "next"),
+        sleep_response("done", "next"),
     ])
-    tools = make_registry(EchoTool(), StopTool())
+    tools = make_registry(EchoTool(), SleepTool())
     messages = [{"role": "user", "content": "go"}]
 
     stop_result, msgs, tools_used = await run_tool_loop(
@@ -394,9 +394,9 @@ async def test_mixed_batch_gets_reflect():
             tc("read_file", {"path": "foo.txt"}, id="t1"),
             tc("echo", {"text": "hi"}, id="t2"),
         ]),
-        stop_response("done", "next"),
+        sleep_response("done", "next"),
     ])
-    tools = make_registry(FakeReadFileTool(), EchoTool(), StopTool())
+    tools = make_registry(FakeReadFileTool(), EchoTool(), SleepTool())
     messages = [{"role": "user", "content": "go"}]
 
     stop_result, msgs, tools_used = await run_tool_loop(
@@ -450,9 +450,9 @@ async def test_reasoning_off_for_routine_calls():
 
     provider = KwargsCapturingProvider([
         tool_response([tc("read_file", {"path": "foo.txt"})]),
-        stop_response("done", "next"),
+        sleep_response("done", "next"),
     ])
-    tools = make_registry(FakeReadFileTool(), StopTool())
+    tools = make_registry(FakeReadFileTool(), SleepTool())
     messages = [{"role": "user", "content": "read it"}]
 
     await run_tool_loop(
@@ -479,9 +479,9 @@ async def test_reasoning_on_for_reflect():
 
     provider = KwargsCapturingProvider([
         tool_response([tc("echo", {"text": "hi"})]),  # non-read-only → reflect
-        stop_response("done", "next"),                 # reflect call with reasoning ON
+        sleep_response("done", "next"),                 # reflect call with reasoning ON
     ])
-    tools = make_registry(EchoTool(), StopTool())
+    tools = make_registry(EchoTool(), SleepTool())
     messages = [{"role": "user", "content": "go"}]
 
     await run_tool_loop(
@@ -508,9 +508,9 @@ async def test_no_reasoning_param_when_not_configured():
 
     provider = KwargsCapturingProvider([
         tool_response([tc("echo", {"text": "hi"})]),
-        stop_response("done", "next"),
+        sleep_response("done", "next"),
     ])
-    tools = make_registry(EchoTool(), StopTool())
+    tools = make_registry(EchoTool(), SleepTool())
     messages = [{"role": "user", "content": "go"}]
 
     await run_tool_loop(

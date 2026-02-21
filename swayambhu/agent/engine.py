@@ -50,8 +50,8 @@ async def run_tool_loop(
     """
     Run the agent tool loop.
 
-    Returns: (stop_result, updated_messages, tools_used)
-    - stop_result: dict with reason/next_steps from stop tool, or synthetic on budget exhaustion
+    Returns: (sleep_result, updated_messages, tools_used)
+    - sleep_result: dict with reason/next_steps from sleep tool, or synthetic on budget exhaustion
     - messages: full conversation history
     - tools_used: list of tool names called
     """
@@ -142,7 +142,7 @@ async def run_tool_loop(
 
             # Execute tools
             for tc in response.tool_calls:
-                if tc.name == "stop":
+                if tc.name == "sleep":
                     # Session ends
                     if chat_logger:
                         _end_log(chat_logger, requests_used, messages, tools_used)

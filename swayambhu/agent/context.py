@@ -6,7 +6,6 @@ import platform
 from pathlib import Path
 from typing import Any
 
-from swayambhu.agent.memory import MemoryStore
 from swayambhu.agent.skills import SkillsLoader
 
 
@@ -22,7 +21,6 @@ class ContextBuilder:
     
     def __init__(self, workspace: Path):
         self.workspace = workspace
-        self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
     
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
@@ -44,11 +42,6 @@ class ContextBuilder:
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
             parts.append(bootstrap)
-        
-        # Memory context
-        memory = self.memory.get_memory_context()
-        if memory:
-            parts.append(f"# Memory\n\n{memory}")
         
         # Skills - progressive loading
         # 1. Always-loaded skills: include full content
@@ -96,7 +89,7 @@ You are an autonomous AI agent. Your identity and values are defined in SOUL.md 
 ## Session
 Your session is a cycle of acting and thinking. After each action you see
 the result and decide what to do next. When you are done — or need to pause —
-call the stop tool with your reason, next steps, and when to wake up.
+call the sleep tool with your reason, next steps, and when to wake up.
 A response without a tool call is you thinking — take your time, then act."""
     
     def _load_bootstrap_files(self) -> str:

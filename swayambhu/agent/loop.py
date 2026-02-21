@@ -1,7 +1,6 @@
 """Agent loop: the core processing engine."""
 
 import asyncio
-import json
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +19,7 @@ from swayambhu.agent.tools.web import WebSearchTool, WebFetchTool
 from swayambhu.agent.tools.message import MessageTool
 from swayambhu.agent.tools.spawn import SpawnTool
 from swayambhu.agent.tools.cron import CronTool
-from swayambhu.agent.tools.stop import StopTool
-from swayambhu.agent.memory import MemoryStore
+from swayambhu.agent.tools.sleep import SleepTool
 from swayambhu.agent.subagent import SubagentManager
 from swayambhu.session.manager import SessionManager
 
@@ -118,8 +116,8 @@ class AgentLoop:
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
 
-        # Stop tool (session termination — intercepted by engine, never executed)
-        self.tools.register(StopTool())
+        # Sleep tool (session termination — intercepted by engine, never executed)
+        self.tools.register(SleepTool())
     
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
@@ -181,18 +179,13 @@ class AgentLoop:
         # Handle slash commands
         cmd = msg.content.strip().lower()
         if cmd == "/new":
-            await self._consolidate_memory(session, archive_all=True)
             session.clear()
             self.sessions.save(session)
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
-                                  content="🐈 New session started. Memory consolidated.")
+                                  content="New session started.")
         if cmd == "/help":
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
                                   content="🐈 swayambhu commands:\n/new — Start a new conversation\n/help — Show available commands")
-        
-        # Consolidate memory before processing if session is too large
-        if len(session.messages) > self.memory_window:
-            await self._consolidate_memory(session)
         
         # Update tool contexts
         message_tool = self.tools.get("message")
@@ -216,9 +209,12 @@ class AgentLoop:
             chat_id=msg.chat_id,
         )
         
+        # Clear scratch pad for new session
+        (self.workspace / "scratch.md").write_text("# Scratch\n", encoding="utf-8")
+
         # Agent loop
         self.chat_logger.start_session(key, self.model)
-        stop_result, messages, tools_used = await run_tool_loop(
+        sleep_result, messages, tools_used = await run_tool_loop(
             provider=self.provider,
             messages=messages,
             tools=self.tools,
@@ -229,10 +225,10 @@ class AgentLoop:
             reasoning_effort=self.reasoning_effort,
             chat_logger=self.chat_logger,
         )
-        await self._handle_stop(stop_result)
-        logger.info(f"Session stopped: {stop_result.get('reason', 'unknown')}")
+        await self._handle_sleep(sleep_result)
+        logger.info(f"Session ended: {sleep_result.get('reason', 'unknown')}")
 
-        # Save user message to session (stop reason is internal, not saved as assistant message)
+        # Save user message to session
         session.add_message("user", msg.content)
         self.sessions.save(session)
 
@@ -283,9 +279,12 @@ class AgentLoop:
             chat_id=origin_chat_id,
         )
         
+        # Clear scratch pad for new session
+        (self.workspace / "scratch.md").write_text("# Scratch\n", encoding="utf-8")
+
         # Agent loop
         self.chat_logger.start_session(session_key, self.model)
-        stop_result, messages, _ = await run_tool_loop(
+        sleep_result, messages, _ = await run_tool_loop(
             provider=self.provider,
             messages=messages,
             tools=self.tools,
@@ -296,40 +295,21 @@ class AgentLoop:
             reasoning_effort=self.reasoning_effort,
             chat_logger=self.chat_logger,
         )
-        await self._handle_stop(stop_result)
-        logger.info(f"System session stopped: {stop_result.get('reason', 'unknown')}")
+        await self._handle_sleep(sleep_result)
+        logger.info(f"System session ended: {sleep_result.get('reason', 'unknown')}")
 
-        # Save system message to session (stop reason is internal)
+        # Save system message to session
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         self.sessions.save(session)
 
         return None
-    
-    async def _handle_stop(self, stop_result: dict) -> None:
-        """Handle session stop: write memory and schedule wake if requested."""
-        memory = MemoryStore(self.workspace)
 
-        # Append session summary to HISTORY.md
-        reason = stop_result.get("reason", "unknown")
-        next_steps = stop_result.get("next_steps", "")
-        from datetime import datetime
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-        memory.append_history(f"[{ts}] Session stopped: {reason}. Next: {next_steps}")
-
-        # Write next_steps to MEMORY.md
-        if next_steps:
-            current = memory.read_long_term()
-            marker = "## Next Steps"
-            # Replace existing next-steps section or append
-            if marker in current:
-                before = current.split(marker)[0].rstrip()
-                updated = f"{before}\n\n{marker}\n{next_steps}\n"
-            else:
-                updated = f"{current}\n\n{marker}\n{next_steps}\n" if current else f"{marker}\n{next_steps}\n"
-            memory.write_long_term(updated)
-
+    async def _handle_sleep(self, sleep_result: dict) -> None:
+        """Schedule wake if requested."""
         # Schedule wake if requested
-        wake_after = stop_result.get("wake_after")
+        reason = sleep_result.get("reason", "unknown")
+        next_steps = sleep_result.get("next_steps", "")
+        wake_after = sleep_result.get("wake_after")
         if wake_after and self.cron_service:
             try:
                 ms = self._parse_duration_ms(wake_after)
@@ -339,7 +319,7 @@ class AgentLoop:
                 self.cron_service.add_job(
                     name=f"wake: {next_steps[:50]}",
                     schedule=CronSchedule(kind="at", at_ms=at_ms),
-                    message=f"Waking up. Previous session stopped: {reason}. Plan: {next_steps}",
+                    message=f"Waking up. Previous session: {reason}. Plan: {next_steps}",
                     delete_after_run=True,
                 )
                 logger.info(f"Scheduled wake in {wake_after} (at_ms={at_ms})")
@@ -356,70 +336,6 @@ class AgentLoop:
                 return int(float(s[:-len(suffix)]) * mult)
         # Fallback: assume minutes
         return int(float(s) * 60_000)
-
-    async def _consolidate_memory(self, session, archive_all: bool = False) -> None:
-        """Consolidate old messages into MEMORY.md + HISTORY.md, then trim session."""
-        if not session.messages:
-            return
-        memory = MemoryStore(self.workspace)
-        if archive_all:
-            old_messages = session.messages
-            keep_count = 0
-        else:
-            keep_count = min(10, max(2, self.memory_window // 2))
-            old_messages = session.messages[:-keep_count]
-        if not old_messages:
-            return
-        logger.info(f"Memory consolidation started: {len(session.messages)} messages, archiving {len(old_messages)}, keeping {keep_count}")
-
-        # Format messages for LLM (include tool names when available)
-        lines = []
-        for m in old_messages:
-            if not m.get("content"):
-                continue
-            tools = f" [tools: {', '.join(m['tools_used'])}]" if m.get("tools_used") else ""
-            lines.append(f"[{m.get('timestamp', '?')[:16]}] {m['role'].upper()}{tools}: {m['content']}")
-        conversation = "\n".join(lines)
-        current_memory = memory.read_long_term()
-
-        prompt = f"""You are a memory consolidation agent. Process this conversation and return a JSON object with exactly two keys:
-
-1. "history_entry": A paragraph (2-5 sentences) summarizing the key events/decisions/topics. Start with a timestamp like [YYYY-MM-DD HH:MM]. Include enough detail to be useful when found by grep search later.
-
-2. "memory_update": The updated long-term memory content. Add any new facts: user location, preferences, personal info, habits, project context, technical decisions, tools/services used. If nothing new, return the existing content unchanged.
-
-## Current Long-term Memory
-{current_memory or "(empty)"}
-
-## Conversation to Process
-{conversation}
-
-Respond with ONLY valid JSON, no markdown fences."""
-
-        try:
-            response = await self.provider.chat(
-                messages=[
-                    {"role": "system", "content": "You are a memory consolidation agent. Respond only with valid JSON."},
-                    {"role": "user", "content": prompt},
-                ],
-                model=self.model,
-            )
-            text = (response.content or "").strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-            result = json.loads(text)
-
-            if entry := result.get("history_entry"):
-                memory.append_history(entry)
-            if update := result.get("memory_update"):
-                if update != current_memory:
-                    memory.write_long_term(update)
-
-            session.messages = session.messages[-keep_count:] if keep_count else []
-            self.sessions.save(session)
-            logger.info(f"Memory consolidation done, session trimmed to {len(session.messages)} messages")
-        except Exception as e:
-            logger.error(f"Memory consolidation failed: {e}")
 
     async def process_direct(
         self,

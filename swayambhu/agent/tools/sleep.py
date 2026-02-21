@@ -1,20 +1,20 @@
-"""Stop tool — lets the agent end its session."""
+"""Sleep tool — lets the agent end its session."""
 
 from typing import Any
 
 from swayambhu.agent.tools.base import Tool
 
 
-class StopTool(Tool):
+class SleepTool(Tool):
     """Tool for the agent to end its session."""
 
     @property
     def name(self) -> str:
-        return "stop"
+        return "sleep"
 
     @property
     def description(self) -> str:
-        return "End the current session. Call when done or need to pause."
+        return "Go to sleep. Call when done or need to pause."
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -23,7 +23,7 @@ class StopTool(Tool):
             "properties": {
                 "reason": {
                     "type": "string",
-                    "description": "Why you are stopping",
+                    "description": "Why you are sleeping",
                 },
                 "next_steps": {
                     "type": "string",
@@ -38,5 +38,5 @@ class StopTool(Tool):
         }
 
     async def execute(self, **kwargs: Any) -> str:
-        # Never called — engine intercepts stop tool
+        # Never called — engine intercepts sleep tool
         return "Session ended."

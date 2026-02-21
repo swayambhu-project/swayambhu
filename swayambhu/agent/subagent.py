@@ -15,7 +15,7 @@ from swayambhu.agent.tools.registry import ToolRegistry
 from swayambhu.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from swayambhu.agent.tools.shell import ExecTool
 from swayambhu.agent.tools.web import WebSearchTool, WebFetchTool
-from swayambhu.agent.tools.stop import StopTool
+from swayambhu.agent.tools.sleep import SleepTool
 
 
 class SubagentManager:
@@ -111,7 +111,7 @@ class SubagentManager:
             ))
             tools.register(WebSearchTool())
             tools.register(WebFetchTool())
-            tools.register(StopTool())
+            tools.register(SleepTool())
 
             # Build messages with subagent-specific prompt
             system_prompt = self._build_subagent_prompt(task)
@@ -121,14 +121,14 @@ class SubagentManager:
             ]
 
             # Run agent loop (lower budget for subagents)
-            stop_result, messages, _ = await run_tool_loop(
+            sleep_result, messages, _ = await run_tool_loop(
                 provider=self.provider,
                 messages=messages,
                 tools=tools,
                 model=self.model,
                 max_requests=15,
             )
-            final_result = stop_result.get("reason", "Task completed.")
+            final_result = sleep_result.get("reason", "Task completed.")
             
             logger.info(f"Subagent [{task_id}] completed successfully")
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
