@@ -23,23 +23,25 @@ class ContextBuilder:
         self.workspace = workspace
         self.skills = SkillsLoader(workspace)
     
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    def build_system_prompt(self, skill_names: list[str] | None = None, first_call: bool = True) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
-        
+
         Args:
             skill_names: Optional list of skills to include.
-        
+            first_call: If True, include SOUL.md; if False, skip it (already internalized).
+
         Returns:
             Complete system prompt.
         """
         parts = []
-        
+
         # Core identity
         parts.append(self._get_identity())
-        
-        # Bootstrap files
-        bootstrap = self._load_bootstrap_files()
+
+        # Bootstrap files (skip SOUL.md after first call — it's already internalized)
+        skip = {"SOUL.md"} if not first_call else set()
+        bootstrap = self._load_bootstrap_files(skip=skip)
         if bootstrap:
             parts.append(bootstrap)
         
@@ -92,16 +94,18 @@ the result and decide what to do next. When you are done — or need to pause �
 call the sleep tool with your reason, next steps, and when to wake up.
 A response without a tool call is you thinking — take your time, then act."""
     
-    def _load_bootstrap_files(self) -> str:
-        """Load all bootstrap files from workspace."""
+    def _load_bootstrap_files(self, skip: set[str] | None = None) -> str:
+        """Load bootstrap files from workspace, optionally skipping some."""
         parts = []
-        
+
         for filename in self.BOOTSTRAP_FILES:
+            if skip and filename in skip:
+                continue
             file_path = self.workspace / filename
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")
-        
+
         return "\n\n".join(parts) if parts else ""
     
     def build_messages(

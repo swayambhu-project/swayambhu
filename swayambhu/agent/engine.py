@@ -7,7 +7,7 @@ from typing import Any
 from loguru import logger
 
 BUDGET_WARNING = "Budget low. Enter your Sleep phase now."
-REFLECT_PROMPT = "Reflect on the results and decide next steps."
+REFLECT_PROMPT = "Reflect on the results and decide next steps. Are these aligned with your SOUL?"
 IDLE_NUDGE = (
     "You have been thinking without acting. "
     "Either use a tool to make progress, or call sleep to end your session."
@@ -97,6 +97,12 @@ async def run_tool_loop(
 
         # Trim context before calling LLM
         messages = _trim_tool_results(messages)
+
+        # Swap system prompt: include SOUL.md only on the first call
+        if context and messages and messages[0].get("role") == "system":
+            messages[0]["content"] = context.build_system_prompt(
+                first_call=(requests_used == 0),
+            )
 
         # Log request
         if chat_logger:
