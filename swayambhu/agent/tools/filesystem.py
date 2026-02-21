@@ -149,7 +149,7 @@ class WriteFileTool(Tool):
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
-            if file_path.exists() and str(file_path) not in self._read_paths:
+            if file_path.exists() and file_path.stat().st_size > 0 and str(file_path) not in self._read_paths:
                 return f"Error: You must read_file '{path}' before overwriting it."
             phase = self._session_state.get("phase", "act")
             if file_path.name == "JOURNAL.md" and phase in JOURNAL_GUARD_PHASES:
