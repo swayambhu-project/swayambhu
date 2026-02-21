@@ -119,7 +119,7 @@ class WriteFileTool(Tool):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
         self._read_paths = read_paths if read_paths is not None else set()
-        self._session_state = session_state or {}
+        self._session_state = session_state if session_state is not None else {}
 
     @property
     def name(self) -> str:
@@ -170,7 +170,7 @@ class EditFileTool(Tool):
                  session_state: dict | None = None):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
-        self._session_state = session_state or {}
+        self._session_state = session_state if session_state is not None else {}
 
     @property
     def name(self) -> str:
