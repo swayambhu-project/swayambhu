@@ -4,7 +4,8 @@
 
 1. Read the last entry in `JOURNAL.md` — how the last session went.
 2. Read the last entry in `NOTEBOOK.md` — what I was working on.
-3. Begin.
+3. If there is unfinished work, continue it.
+   If not, look outward — use `web_search` to perceive the world and find something meaningful to act on.
 
 ## Act
 
