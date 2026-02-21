@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import nullcontext
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,10 +10,11 @@ from swayambhu.cli import commands
 
 @pytest.fixture
 def mock_prompt_session():
-    """Mock the global prompt session."""
+    """Mock the global prompt session and patch_stdout (no real console needed)."""
     mock_session = MagicMock()
     mock_session.prompt_async = AsyncMock()
-    with patch("nanobot.cli.commands._PROMPT_SESSION", mock_session):
+    with patch("swayambhu.cli.commands._PROMPT_SESSION", mock_session), \
+         patch("swayambhu.cli.commands.patch_stdout", return_value=nullcontext()):
         yield mock_session
 
 
@@ -43,8 +45,8 @@ def test_init_prompt_session_creates_session():
     # Ensure global is None before test
     commands._PROMPT_SESSION = None
     
-    with patch("nanobot.cli.commands.PromptSession") as MockSession, \
-         patch("nanobot.cli.commands.FileHistory") as MockHistory, \
+    with patch("swayambhu.cli.commands.PromptSession") as MockSession, \
+         patch("swayambhu.cli.commands.FileHistory") as MockHistory, \
          patch("pathlib.Path.home") as mock_home:
         
         mock_home.return_value = MagicMock()
