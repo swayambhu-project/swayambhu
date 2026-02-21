@@ -8,7 +8,12 @@ from loguru import logger
 
 BUDGET_WARNING = "Budget low. Enter your Sleep phase now."
 REFLECT_PROMPT = "Reflect on the results and decide next steps."
+IDLE_NUDGE = (
+    "You have been thinking without acting. "
+    "Either use a tool to make progress, or call sleep to end your session."
+)
 MAX_CONTEXT_CHARS = 20_000  # rough limit before trimming old tool results
+DEFAULT_IDLE_TOKEN_THRESHOLD = 1500  # max text-only tokens before nudge/force-stop
 READ_ONLY_TOOLS = frozenset({"read_file", "list_dir", "web_search", "web_fetch"})
 
 
@@ -46,6 +51,8 @@ async def run_tool_loop(
     context=None,  # ContextBuilder — uses add_assistant_message/add_tool_result if provided
     reasoning_effort: str | None = None,  # None = no toggle; "low"/"medium"/"high" for routine calls
     reflect_reasoning_effort: str = "high",  # Reasoning level for reflection steps
+    idle_token_threshold: int = DEFAULT_IDLE_TOKEN_THRESHOLD,  # Text-only tokens before nudge
+    idle_token_limit: int = 500,  # Text-only tokens after nudge before force-stop
     chat_logger=None,  # optional ChatLogger for full transcript logging
 ) -> tuple[dict | None, list[dict[str, Any]], list[str]]:
     """
@@ -64,6 +71,12 @@ async def run_tool_loop(
     # reflect calls (after non-read-only tools) use the configured level.
     can_reason = reasoning_effort is not None
     next_reasoning: str | None = "none" if can_reason else None
+
+    # Idle detection: cumulative completion tokens since last tool call.
+    # A healthy agent thinks briefly then acts. If it burns tokens without
+    # action, it's stuck. Nudge once, then force-stop.
+    idle_tokens = 0
+    idle_nudged = False
 
     while requests_used < max_requests:
         # Time budget check
@@ -112,6 +125,10 @@ async def run_tool_loop(
             chat_logger.log_response(requests_used, response, llm_ms)
 
         if response.has_tool_calls:
+            # Action taken — reset idle tracking
+            idle_tokens = 0
+            idle_nudged = False
+
             # Add assistant message with tool calls
             tool_call_dicts = [
                 {
@@ -199,6 +216,33 @@ async def run_tool_loop(
             )
             if can_reason and last_user == REFLECT_PROMPT:
                 next_reasoning = reflect_reasoning_effort
+
+            # Idle detection: accumulate text-only tokens
+            idle_tokens += response.usage.get("completion_tokens", 0)
+            threshold = idle_token_limit if idle_nudged else idle_token_threshold
+            if threshold and idle_tokens >= threshold:
+                if idle_nudged:
+                    # Already nudged once — force-stop
+                    logger.warning(
+                        f"Idle limit: {idle_tokens} text-only tokens after nudge. "
+                        "Force-stopping session."
+                    )
+                    if chat_logger:
+                        _end_log(chat_logger, requests_used, messages, tools_used)
+                    return {
+                        "reason": "idle_limit",
+                        "next_steps": "Continue from where I left off",
+                    }, messages, tools_used
+                else:
+                    # First breach — nudge
+                    logger.warning(
+                        f"Idle warning: {idle_tokens} text-only tokens without action. Nudging."
+                    )
+                    messages.append({"role": "user", "content": IDLE_NUDGE})
+                    idle_nudged = True
+                    idle_tokens = 0  # reset for post-nudge limit
+                    if can_reason:
+                        next_reasoning = reflect_reasoning_effort
 
     # Budget exhausted — force stop
     if chat_logger:

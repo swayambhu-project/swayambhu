@@ -313,6 +313,8 @@ def gateway(
         session_manager=session_manager,
         reasoning_effort=config.agents.defaults.reasoning_effort,
         reflect_reasoning_effort=config.agents.defaults.reflect_reasoning_effort,
+        idle_token_threshold=config.agents.defaults.idle_token_threshold,
+        idle_token_limit=config.agents.defaults.idle_token_limit,
     )
     
     # Set cron callback (needs agent)
@@ -422,6 +424,8 @@ def agent(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         reasoning_effort=config.agents.defaults.reasoning_effort,
         reflect_reasoning_effort=config.agents.defaults.reflect_reasoning_effort,
+        idle_token_threshold=config.agents.defaults.idle_token_threshold,
+        idle_token_limit=config.agents.defaults.idle_token_limit,
     )
     
     # Show spinner when logs are off (no output to miss); skip when logs are on

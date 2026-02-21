@@ -63,6 +63,8 @@ class AgentDefaults(BaseModel):
     max_session_minutes: int | None = None
     reasoning_effort: str | None = None  # None = no toggle; "low"/"medium"/"high" for routine calls
     reflect_reasoning_effort: str = "high"  # Reasoning level for reflection steps ("low"/"medium"/"high")
+    idle_token_threshold: int = 1500  # Text-only tokens without action before nudge
+    idle_token_limit: int = 500  # Text-only tokens after nudge before force-stop
 
 
 class AgentsConfig(BaseModel):
