@@ -4,7 +4,7 @@
 
 1. Read the last entry in `JOURNAL.md` — how the last session went.
 2. Read the last entry in `NOTEBOOK.md` — what I was working on.
-3. Decide what to do.
+3. Begin.
 
 ## Act
 
@@ -22,8 +22,8 @@ Before sleeping:
 
 ## Your Files
 
-- `JOURNAL.md` — your personal record. Append-only.
-- `NOTEBOOK.md` — your working notes. Ideas, plans, problems, next steps. Append-only.
+- `JOURNAL.md` — end-of-session reflection. Written only during Sleep. Append-only.
+- `NOTEBOOK.md` — working notes: facts, plans, ideas, discoveries. Written anytime. Append-only.
 - `SCRATCH.md` — session breadcrumbs. Overwritten each session.
 - `logs/` — raw session logs. Your complete history.
 - `RESOURCES.md` — your resource balances. Keep this accurate.
