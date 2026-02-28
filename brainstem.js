@@ -254,9 +254,7 @@ class Brainstem {
       const tripwireResult = this.checkTripwires(tripwires);
       if (tripwireResult) {
         await this.karmaRecord({ event: "tripwire_fired", ...tripwireResult });
-        if (tripwireResult.action === "stop_and_reflect") break;
-        if (tripwireResult.action === "skip_remaining") break;
-        if (tripwireResult.action === "reorient") break;
+        break;
       }
 
       // Substitute variables into step
@@ -1164,13 +1162,14 @@ class Brainstem {
 
   substituteVars(step) {
     const json = JSON.stringify(step);
+    let hasFailed = false;
     const substituted = json.replace(/\{\{(\w+)\}\}/g, (match, varName) => {
       const val = this.results[varName];
-      if (val?.__failed) return null;
+      if (val?.__failed) { hasFailed = true; return "null"; }
       if (val === undefined) return match;
       return typeof val === "string" ? val : JSON.stringify(val);
     });
-    if (substituted.includes("null")) return null;
+    if (hasFailed) return null;
     try {
       return JSON.parse(substituted);
     } catch {
