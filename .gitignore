@@ -1,0 +1,23 @@
+# Secrets
+.env
+.dev.vars
+
+# Cloudflare
+.wrangler/
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Workspace (agent runtime data)
+workspace/
+
+# Dev containers
+.devcontainer/

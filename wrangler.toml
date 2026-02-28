@@ -1,0 +1,25 @@
+name = "swayambhu-cns"
+main = "brainstem.js"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[worker_loaders]]
+binding = "LOADER"
+
+# KV namespace binding
+[[kv_namespaces]]
+binding = "KV"
+id = "05720444f9654ed4985fb67af4aea24d"
+
+# Cron trigger — default every 6 hours, but Swayambhu controls effective
+# wake frequency via wake_config.sleep_seconds and the brainstem's
+# "should I actually wake up?" check
+[triggers]
+crons = ["0 */6 * * *"]
+
+# Secrets (set via: wrangler secret put SECRET_NAME)
+# OPENROUTER_API_KEY
+# TELEGRAM_BOT_TOKEN
+# TELEGRAM_CHAT_ID
+# WALLET_ADDRESS
+# WALLET_PRIVATE_KEY
