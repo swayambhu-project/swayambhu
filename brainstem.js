@@ -624,7 +624,12 @@ class Brainstem {
         }
       }
       if (reflection.updated_defaults) {
-        const merged = { ...this.defaults, ...reflection.updated_defaults };
+        const merged = { ...this.defaults };
+        for (const [k, v] of Object.entries(reflection.updated_defaults)) {
+          merged[k] = (v && typeof v === "object" && !Array.isArray(v))
+            ? { ...merged[k], ...v }
+            : v;
+        }
         await this.kvPut("config:defaults", merged);
       }
       if (reflection.updated_model_details) {
@@ -1110,8 +1115,9 @@ class Brainstem {
     if (!models || !updates) return;
     for (const update of updates) {
       const model = models.models.find(m => m.alias === update.model || m.id === update.model);
-      if (model && update.update_best_for) {
-        model.best_for = update.update_best_for;
+      if (model) {
+        const { model: _, ...fields } = update;
+        Object.assign(model, fields);
       }
     }
     await this.kvPut("config:models", models);
