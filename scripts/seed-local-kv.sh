@@ -351,6 +351,19 @@ echo "--- Prompts ---"
 put_kv "prompt:reflect" "prompt-reflect.md"
 put_kv "prompt:deep" "prompt-deep.md"
 
+cat > /tmp/_kv_seed_val <<'PROMPTEOF'
+You are planning a subgoal. Produce a JSON array of steps.
+
+Goal: {{goal}}
+
+Each step is an object with: type (action|think|conditional|subplan), id, tool, input, reason.
+Optional: store_result_as (save result as variable for later steps via {{var}}), depends_on (array of step IDs that must succeed first).
+
+Budget: max {{maxSteps}} steps, max ${{maxCost}}.
+Executor model: {{executorModel}}
+PROMPTEOF
+put_kv "prompt:subplan" /tmp/_kv_seed_val
+
 # ── Soul, orient, wisdom (from remote or placeholder) ────────
 
 echo ""
@@ -398,12 +411,26 @@ Orient yourself. Decide what to do this session. Respond with JSON:
 {
   "session_plan": "What you will do and why",
   "steps": [
-    {"tool": "tool_name", "input": {...}, "reason": "why"}
+    {
+      "type": "action",
+      "id": "unique_step_id",
+      "tool": "tool_name",
+      "input": {},
+      "reason": "why",
+      "store_result_as": "var_name",
+      "depends_on": ["other_step_id"]
+    }
   ],
   "effort_assessment": "low|medium|high",
   "kv_operations": []
 }
 ```
+
+### Step fields
+- **type**: `action` (run a tool), `think` (call an LLM), `conditional` (branch on a condition), `subplan` (nested goal)
+- **id**: unique identifier for this step — required if other steps depend on it
+- **store_result_as**: save the result as a variable; later steps can reference it as `{{var_name}}`
+- **depends_on**: array of step IDs that must succeed before this step runs. Use this for ordering dependencies even when no variables are shared (e.g. step A sends a message, step B checks for a reply). If any dependency failed, this step is skipped automatically.
 PROMPTEOF
   put_kv "prompt:orient" /tmp/_kv_seed_val
 

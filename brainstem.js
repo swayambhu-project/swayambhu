@@ -260,8 +260,30 @@ class Brainstem {
       // Substitute variables into step
       const resolvedStep = this.substituteVars(step);
 
-      // Check for failed dependency
+      // Check explicit depends_on
+      if (step.depends_on) {
+        const deps = Array.isArray(step.depends_on) ? step.depends_on : [step.depends_on];
+        const failedDep = deps.find(d => this.results[d]?.__failed);
+        if (failedDep) {
+          if (step.store_result_as) {
+            this.results[step.store_result_as] = { __failed: true, error: `skipped: dependency "${failedDep}" failed` };
+          }
+          await this.karmaRecord({
+            event: "step_skipped",
+            step_index: i,
+            step_id: step.id,
+            reason: "failed_dependency",
+            dependency: failedDep,
+          });
+          continue;
+        }
+      }
+
+      // Check for failed variable substitution
       if (resolvedStep === null) {
+        if (step.store_result_as) {
+          this.results[step.store_result_as] = { __failed: true, error: "skipped: failed dependency" };
+        }
         await this.karmaRecord({
           event: "step_skipped",
           step_index: i,
@@ -363,11 +385,18 @@ class Brainstem {
           break;
         }
         const plannerModel = this.resolveModel(step.planner_model);
+        const subplanPrompt = await this.kvGet("prompt:subplan") || this.defaultSubplanPrompt();
+        const prompt = this.buildPrompt(subplanPrompt, {
+          goal: step.goal,
+          maxSteps: step.max_steps || 5,
+          maxCost: step.max_cost || 0.05,
+          executorModel: step.executor_model || "haiku",
+        });
         const planResult = await this.callLLM({
           model: plannerModel,
           effort: step.planner_effort || "medium",
           maxTokens: step.max_output_tokens || 1000,
-          prompt: `You are planning a subgoal. Produce a JSON array of steps.\n\nGoal: ${step.goal}\n\nAvailable step types: action, think, conditional, subplan.\nBudget: max ${step.max_steps || 5} steps, max $${step.max_cost || 0.05}.\nExecutor model: ${step.executor_model || "haiku"}`,
+          prompt,
           step: step.id || `subplan_${this.stepCount}`,
         });
         this.sessionCost += planResult.cost;
@@ -1175,6 +1204,18 @@ class Brainstem {
     } catch {
       return step;
     }
+  }
+
+  defaultSubplanPrompt() {
+    return `You are planning a subgoal. Produce a JSON array of steps.
+
+Goal: {{goal}}
+
+Each step is an object with: type (action|think|conditional|subplan), id, tool, input, reason.
+Optional: store_result_as (save result as variable for later steps via {{var}}), depends_on (array of step IDs that must succeed first).
+
+Budget: max {{maxSteps}} steps, max ${{maxCost}}.
+Executor model: {{executorModel}}`;
   }
 
   defaultReflectPrompt() {
