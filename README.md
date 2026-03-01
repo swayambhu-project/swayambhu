@@ -4,7 +4,7 @@ An autonomous AI agent that runs on Cloudflare Workers. Wakes on a cron schedule
 
 ## Architecture
 
-**Brainstem** (`brainstem.js`): ~1200 lines of JS. A thin execution loop that handles waking, calling LLMs, running tools, and sleeping. It has opinions about very little. It does not decide what to think about, which models to use, or what tools exist — it reads all of that from KV at runtime.
+**Brainstem** (`brainstem.js`): ~1600 lines of JS. A thin execution loop that handles waking, calling LLMs, running tools, and sleeping. It has opinions about very little. It does not decide what to think about, which models to use, or what tools exist — it reads all of that from KV at runtime.
 
 **KV**: Where identity, memory, tools, prompts, config, and provider adapters live. The brainstem loads what it needs each session. Swayambhu can modify everything in KV except the `soul` key, which is immutable.
 
@@ -113,11 +113,38 @@ Each level multiplies through the levels below it. The system is a compiler that
 
 The same gearing works in reverse for mistakes, which is why the soul exists as a fixed attractor. The system can orbit around it in increasingly sophisticated ways, but can't drift away from it.
 
+## Mutation protocol
+
+Self-modification is the point — but ungoverned self-modification is how you brick yourself. The mutation protocol adds a lifecycle to changes that touch protected keys (prompts, config, functions, secrets, wisdom).
+
+**The problem it solves:** Reflect and deep reflect could freely overwrite any KV key. A bad LLM output could corrupt the orient prompt, break config defaults, or silently degrade the system with no rollback path. There was no way to evaluate whether a self-modification actually helped.
+
+**Protection gate.** All KV writes from reflect/deep reflect pass through `applyKVOperation`, which blocks writes to system keys (anything prefixed with `prompt:`, `config:`, `functions:`, `secret:`, or exact keys like `wisdom`, `providers`, `wallets`). Agent-created keys with `unprotected: true` in their metadata still pass through freely. System keys cannot be marked unprotected — `kvPut` strips that flag.
+
+**Staged → Candidate → Promoted.** To modify a protected key, the LLM submits a `mutation_request` containing claims (what it's trying to achieve), ops (the KV operations), and checks (verifiable conditions to evaluate later). The lifecycle:
+
+1. **Reflect** proposes mutations → they become **staged** (stored but not applied)
+2. **Deep reflect** reviews staged mutations and issues verdicts: apply, reject, modify, defer, or withdraw
+3. Applied mutations become **candidates** — the ops are executed, but the old values are snapshotted for rollback
+4. **Deep reflect** later promotes candidates (delete the snapshot, change is permanent) or rolls them back (restore old values)
+
+Deep reflect's own mutation requests skip staging and become candidates immediately — it's the highest-trust context.
+
+**Check DSL.** Each mutation carries checks that the brainstem evaluates mechanically. Two types:
+- `kv_assert` — read a KV key (with optional dot-path), test with a predicate (`exists`, `equals`, `gt`, `lt`, `matches`, `type`)
+- `tool_call` — execute a tool, optionally assert on the result
+
+Check results are shown in context whenever mutations are loaded, so the LLM sees whether its changes are working before deciding to promote or rollback.
+
+**Circuit breaker.** On every wake, before the session starts, the brainstem scans karma logs for danger signals (`fatal_error`, `orient_parse_error`, `all_providers_failed`) that occurred after any candidate mutation was activated. If found, it auto-rolls back the candidate. This catches the case where a bad mutation breaks the system so badly that no LLM call succeeds — the brainstem handles recovery mechanically without needing an LLM.
+
+**Conflict detection.** Two mutations targeting the same key can't both be candidates simultaneously. The second is rejected until the first is promoted or rolled back.
+
 ## Bootstrap notes
 
 The brainstem contains `BOOTSTRAP NOTE` comments at several points marking things that are intentionally minimal and meant to be improved by Swayambhu himself:
 
 - **Input sanitization** — Basic prompt injection filter. Needs multi-language support, obfuscation detection, financial manipulation patterns.
 - **Spend caps** — No hard daily budget enforcement. Orient is smart about costs but the brainstem doesn't enforce a ceiling.
-- **KV diffs** — Writes don't record old values. Diff-based karma would make cross-session debugging much richer.
+- **KV diffs** — Regular writes don't record old values. Mutation protocol candidates snapshot values for rollback, but unprotected key writes are still fire-and-forget.
 - **Soul integrity** — Write-blocked but no hash verification.
