@@ -2,6 +2,9 @@ name = "swayambhu-dashboard-api"
 main = "worker.js"
 compatibility_date = "2025-06-01"
 
+[vars]
+OPERATOR_KEY = "test"  # overridden by secret in production
+
 [[kv_namespaces]]
 binding = "KV"
 id = "05720444f9654ed4985fb67af4aea24d"

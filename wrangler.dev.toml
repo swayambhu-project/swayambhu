@@ -1,0 +1,11 @@
+name = "swayambhu-dev"
+main = "brainstem-dev.js"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[kv_namespaces]]
+binding = "KV"
+id = "05720444f9654ed4985fb67af4aea24d"
+
+[triggers]
+crons = ["0 */6 * * *"]

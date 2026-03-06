@@ -2,6 +2,9 @@
 .env
 .dev.vars
 
+# Dependencies
+node_modules/
+
 # Cloudflare
 .wrangler/
 
@@ -18,6 +21,9 @@ Thumbs.db
 
 # Workspace (agent runtime data)
 workspace/
+
+# Screenshots (dev tooling)
+screenshots/
 
 # Dev containers
 .devcontainer/

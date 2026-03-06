@@ -10,9 +10,10 @@
 // Tools are loaded dynamically from KV and executed in sandboxed isolates.
 // The karma log records every LLM call and tool execution with full request/response.
 
+// CF-SPECIFIC: WorkerEntrypoint is the CF RPC mechanism for cross-isolate calls
 import { WorkerEntrypoint } from "cloudflare:workers";
 
-// RPC bridge — gives isolate-loaded tools scoped KV access without passing functions through JSON.
+// CF-SPECIFIC: WorkerEntrypoint subclass — RPC bridge giving isolate-loaded tools scoped KV access
 export class ScopedKV extends WorkerEntrypoint {
   async get(key) {
     const { toolName, kvAccess } = this.ctx.props;
@@ -23,7 +24,10 @@ export class ScopedKV extends WorkerEntrypoint {
   async put(key, value) {
     const { toolName } = this.ctx.props;
     const resolved = `tooldata:${toolName}:${key}`;  // writes always scoped
-    await this.env.KV.put(resolved, typeof value === "string" ? value : JSON.stringify(value));
+    const fmt = typeof value === "string" ? "text" : "json";
+    await this.env.KV.put(resolved, typeof value === "string" ? value : JSON.stringify(value), {
+      metadata: { type: "tooldata", format: fmt, updated_at: new Date().toISOString() },
+    });
   }
   async list(opts = {}) {
     const { toolName, kvAccess } = this.ctx.props;
@@ -43,7 +47,7 @@ export class ScopedKV extends WorkerEntrypoint {
 // Safe — Workers process one request per isolate.
 let _activeBrain = null;
 
-// RPC bridge — gives the wake hook access to kernel primitives.
+// CF-SPECIFIC: WorkerEntrypoint subclass — RPC bridge giving the wake hook access to kernel primitives
 export class KernelRPC extends WorkerEntrypoint {
   _brain() {
     if (!_activeBrain) throw new Error("KernelRPC: no active brainstem instance");
@@ -74,6 +78,7 @@ export class KernelRPC extends WorkerEntrypoint {
 
   // Sandbox
   async executeAction(step) { return this._brain().executeAction(step); }
+  async executeAdapter(adapterKey, input) { return this._brain().executeAdapter(adapterKey, input); }
 
   // Karma
   async karmaRecord(entry) { return this._brain().karmaRecord(entry); }
@@ -101,17 +106,19 @@ export class KernelRPC extends WorkerEntrypoint {
   async elapsed() { return this._brain().elapsed(); }
 }
 
+// CF-SPECIFIC: scheduled() is the CF cron trigger entry point
 export default {
-  async scheduled(event, env) {
-    const brain = new Brainstem(env);
+  async scheduled(event, env, ctx) {
+    const brain = new Brainstem(env, { ctx });
     await brain.runScheduled();
   },
 };
 
 class Brainstem {
-  constructor(env) {
+  constructor(env, opts = {}) {
     this.env = env;
-    this.kv = env.KV;
+    this.ctx = opts.ctx || null;
+    this.kv = env.KV;  // CF-SPECIFIC: KV namespace binding from wrangler.toml
     this.startTime = Date.now();
     this.sessionId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     this.sessionCost = 0;
@@ -370,15 +377,39 @@ class Brainstem {
     await this.kvPut("kernel:active_session", this.sessionId);
 
     let outcome = "clean";
-    _activeBrain = this;
-
     try {
-      const worker = this.env.LOADER.get(`hook:wake:${this.sessionId}`, (loaderCtx) => ({
+      // Platform-specific hook invocation (overridable)
+      await this._invokeHookModules(modules, mainModule);
+    } catch (err) {
+      outcome = "crash";
+      await this.karmaRecord({
+        event: "hook_execution_error",
+        error: err.message,
+        stack: err.stack,
+      });
+
+      // Fall back to hardcoded minimal in same session
+      await this.runMinimalFallback();
+    }
+
+    // Update session history
+    await this.updateSessionOutcome(outcome);
+
+    // Clean up active session marker
+    await this.kv.delete("kernel:active_session");
+  }
+
+  // Platform-specific: invoke hook modules in CF Worker Loader isolate
+  async _invokeHookModules(modules, mainModule) {
+    _activeBrain = this;
+    try {
+      // CF-SPECIFIC: env.LOADER is a [[worker_loaders]] binding; ctx.exports.* are loopback bindings
+      const worker = this.env.LOADER.get(`hook:wake:${this.sessionId}`, () => ({
         compatibilityDate: "2025-06-01",
         mainModule,
         modules,
         env: {
-          KERNEL: loaderCtx.exports.KernelRPC(),
+          KERNEL: this.ctx.exports.KernelRPC({}),
         },
       }));
 
@@ -394,25 +425,9 @@ class Brainstem {
         const body = await response.text();
         throw new Error(`Hook returned ${response.status}: ${body}`);
       }
-    } catch (err) {
-      outcome = "crash";
-      await this.karmaRecord({
-        event: "hook_execution_error",
-        error: err.message,
-        stack: err.stack,
-      });
-
-      // Fall back to hardcoded minimal in same session
-      await this.runMinimalFallback();
     } finally {
       _activeBrain = null;
     }
-
-    // Update session history
-    await this.updateSessionOutcome(outcome);
-
-    // Clean up active session marker
-    await this.kv.delete("kernel:active_session");
   }
 
   async updateSessionOutcome(outcome) {
@@ -502,17 +517,8 @@ class Brainstem {
   async executeAction(step) {
     const toolName = step.tool;
 
-    // Load tool code + meta (cached per session)
-    if (!this.toolsCache[toolName]) {
-      const [code, meta] = await Promise.all([
-        this.kvGet(`tool:${toolName}:code`),
-        this.kvGet(`tool:${toolName}:meta`),
-      ]);
-      if (!code) throw new Error(`Unknown tool: ${toolName} — no code at tool:${toolName}:code`);
-      this.toolsCache[toolName] = { code, meta };
-    }
-
-    const { code: moduleCode, meta } = this.toolsCache[toolName];
+    // Load tool code + meta (platform-specific, overridable)
+    const { meta, moduleCode } = await this._loadTool(toolName);
 
     // Build sandboxed context based on function metadata
     const ctx = await this.buildToolContext(toolName, meta || {}, step.input || {});
@@ -522,19 +528,12 @@ class Brainstem {
       event: "tool_start",
       tool: toolName,
       step_id: step.id,
-      input_summary: JSON.stringify(step.input || {}).slice(0, 500),
+      input_summary: step.input || {},
     });
 
-    // Execute in isolate
+    // Execute (platform-specific, overridable)
     try {
-      const result = await this.runInIsolate({
-        id: `fn:${toolName}:${this.sessionId}`,
-        moduleCode,
-        ctx,
-        kvAccess: meta?.kv_access,
-        toolName,
-        timeoutMs: meta?.timeout_ms || 15000,
-      });
+      const result = await this._executeTool(toolName, moduleCode, meta, ctx);
 
       // Record success
       await this.karmaRecord({
@@ -542,7 +541,7 @@ class Brainstem {
         tool: toolName,
         step_id: step.id,
         ok: true,
-        result_summary: JSON.stringify(result).slice(0, 1000),
+        result_summary: result,
       });
 
       return result;
@@ -556,6 +555,42 @@ class Brainstem {
       });
       throw err;
     }
+  }
+
+  async executeAdapter(adapterKey, input) {
+    const [code, meta] = await Promise.all([
+      this.kvGet(`${adapterKey}:code`),
+      this.kvGet(`${adapterKey}:meta`),
+    ]);
+    if (!code) throw new Error(`No adapter at ${adapterKey}:code`);
+    const ctx = await this.buildToolContext(adapterKey, meta || {}, input);
+    return this._executeTool(adapterKey, code, meta, ctx);
+  }
+
+  // Platform-specific: load tool code + meta from KV (cached per session)
+  async _loadTool(toolName) {
+    if (!this.toolsCache[toolName]) {
+      const [code, meta] = await Promise.all([
+        this.kvGet(`tool:${toolName}:code`),
+        this.kvGet(`tool:${toolName}:meta`),
+      ]);
+      if (!code) throw new Error(`Unknown tool: ${toolName} — no code at tool:${toolName}:code`);
+      this.toolsCache[toolName] = { code, meta };
+    }
+    const { code: moduleCode, meta } = this.toolsCache[toolName];
+    return { moduleCode, meta };
+  }
+
+  // Platform-specific: execute tool code in CF Worker Loader isolate
+  async _executeTool(toolName, moduleCode, meta, ctx) {
+    return this.runInIsolate({
+      id: `fn:${toolName}:${this.sessionId}`,
+      moduleCode,
+      ctx,
+      kvAccess: meta?.kv_access,
+      toolName,
+      timeoutMs: meta?.timeout_ms || 15000,
+    });
   }
 
   async buildToolContext(toolName, meta, input) {
@@ -577,17 +612,49 @@ class Brainstem {
     return { ...input, secrets };
   }
 
+  // ── Module wrapping for Worker Loader ───────────────────────
+
+  static wrapAsModule(rawCode) {
+    return `${rawCode}
+
+const _fn = typeof execute === "function" ? execute
+          : typeof call === "function" ? call
+          : typeof check === "function" ? check
+          : null;
+
+export default {
+  async fetch(request, env) {
+    try {
+      if (!_fn) return Response.json({ ok: false, error: "No execute/call/check function found" });
+      const ctx = await request.json();
+      ctx.fetch = fetch;
+      if (env.KV_BRIDGE) ctx.kv = env.KV_BRIDGE;
+      const result = await _fn(ctx);
+      return Response.json({ ok: true, result });
+    } catch (e) {
+      return Response.json({ ok: false, error: e.message || String(e) });
+    }
+  },
+};
+`;
+  }
+
   // ── Isolate execution (Worker Loader API) ───────────────────
 
   async runInIsolate({ id, moduleCode, ctx, kvAccess, toolName, timeoutMs }) {
     const hasKV = kvAccess && kvAccess !== "none";
 
-    const worker = this.env.LOADER.get(id, (loaderCtx) => ({
+    // Wrap raw functions as ES modules if needed (Worker Loader requires export default)
+    const isESModule = /export\s+default\s/.test(moduleCode);
+    const finalCode = isESModule ? moduleCode : Brainstem.wrapAsModule(moduleCode);
+
+    // CF-SPECIFIC: env.LOADER is a [[worker_loaders]] binding; ctx.exports.* are loopback bindings
+    const worker = this.env.LOADER.get(id, () => ({
       compatibilityDate: "2025-06-01",
       mainModule: "fn.js",
-      modules: { "fn.js": moduleCode },
+      modules: { "fn.js": finalCode },
       env: {
-        ...(hasKV ? { KV_BRIDGE: loaderCtx.exports.ScopedKV({ props: { toolName, kvAccess } }) } : {}),
+        ...(hasKV ? { KV_BRIDGE: this.ctx.exports.ScopedKV({ props: { toolName, kvAccess } }) } : {}),
       },
     }));
 
@@ -674,9 +741,10 @@ class Brainstem {
       out_tokens: result.usage.completion_tokens,
       thinking_tokens: result.usage.thinking_tokens || 0,
       cost,
-      request: `[${msgs.length} messages]`,
-      response: result.content?.slice(0, 2000) || null,
-      tool_calls: result.toolCalls?.length || 0,
+      request: msgs,
+      response: result.content || null,
+      tool_calls: result.toolCalls || [],
+      tools_available: tools?.map(t => ({ name: t.function?.name, description: t.function?.description })) || [],
     });
 
     this.sessionCost += cost;
@@ -1039,24 +1107,26 @@ class Brainstem {
 
     // Auto-tag: guarantee every key has at minimum a type based on prefix
     const prefix = key.split(":")[0];
+    const fmt = typeof value === "string" ? "text" : "json";
     const defaults = {
-      providers:  { type: "config" },
-      wallets:    { type: "config" },
-      tool:       { type: "tool", runtime: "worker" },
-      provider:   { type: "provider", runtime: "worker" },
-      karma:      { type: "log" },
-      prompt:     { type: "prompt" },
-      config:     { type: "config" },
-      dharma:     { type: "core", immutable: true },
-      secret:     { type: "secret" },
-      session:    { type: "session" },
-      tooldata:   { type: "tooldata" },
-      reflect:    { type: "reflect_output" },
-      hook:       { type: "hook" },
-      doc:        { type: "doc" },
-      mutation_staged:    { type: "mutation" },
-      mutation_candidate: { type: "mutation" },
-      kernel:     { type: "kernel" },
+      providers:  { type: "config", format: "json" },
+      wallets:    { type: "config", format: "json" },
+      tool:       { type: "tool", runtime: "worker", format: "text" },
+      provider:   { type: "provider", runtime: "worker", format: "text" },
+      karma:      { type: "log", format: "json" },
+      prompt:     { type: "prompt", format: "text" },
+      config:     { type: "config", format: "json" },
+      dharma:     { type: "core", immutable: true, format: "text" },
+      secret:     { type: "secret", format: "json" },
+      session:    { type: "session", format: "json" },
+      tooldata:   { type: "tooldata", format: fmt },
+      reflect:    { type: "reflect_output", format: "json" },
+      hook:       { type: "hook", format: "text" },
+      doc:        { type: "doc", format: "text" },
+      wisdom:     { type: "core", format: "text" },
+      mutation_staged:    { type: "mutation", format: "json" },
+      mutation_candidate: { type: "mutation", format: "json" },
+      kernel:     { type: "kernel", format: "json" },
     };
     const finalMetadata = {
       ...defaults[prefix],

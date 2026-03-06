@@ -25,124 +25,9 @@ import {
   loadReflectPrompt,
   loadBelowPrompt,
   loadReflectHistory,
+  getBalances,
 } from "../wake-hook.js";
-
-// ── Mock K (KernelRPC) ──────────────────────────────────────
-
-function makeKVStore(initial = {}) {
-  const store = new Map(Object.entries(initial));
-  const metaStore = new Map();
-
-  return {
-    get: vi.fn(async (key, format) => {
-      const val = store.get(key) ?? null;
-      if (val === null) return null;
-      if (format === "json") {
-        return typeof val === "string" ? JSON.parse(val) : val;
-      }
-      return typeof val === "string" ? val : JSON.stringify(val);
-    }),
-    put: vi.fn(async (key, value, opts) => {
-      store.set(key, typeof value === "string" ? value : JSON.stringify(value));
-      if (opts?.metadata) metaStore.set(key, opts.metadata);
-    }),
-    delete: vi.fn(async (key) => {
-      store.delete(key);
-      metaStore.delete(key);
-    }),
-    getWithMetadata: vi.fn(async (key) => {
-      const val = store.get(key) ?? null;
-      return { value: val, metadata: metaStore.get(key) || null };
-    }),
-    _store: store,
-    _meta: metaStore,
-  };
-}
-
-function makeMockK(kvInit = {}, opts = {}) {
-  const kv = makeKVStore(kvInit);
-
-  return {
-    // KV reads
-    kvGet: vi.fn(async (key) => {
-      const val = kv._store.get(key) ?? null;
-      if (val === null) return null;
-      try { return typeof val === "string" ? JSON.parse(val) : val; }
-      catch { return val; }
-    }),
-    kvGetWithMeta: vi.fn(async (key) => {
-      const val = kv._store.get(key) ?? null;
-      return { value: val, metadata: kv._meta.get(key) || null };
-    }),
-    kvList: vi.fn(async (listOpts = {}) => {
-      let keys = [...kv._store.keys()];
-      if (listOpts.prefix) keys = keys.filter(k => k.startsWith(listOpts.prefix));
-      if (listOpts.limit) keys = keys.slice(0, listOpts.limit);
-      return {
-        keys: keys.map(name => ({ name, metadata: kv._meta.get(name) || null })),
-        list_complete: true,
-      };
-    }),
-
-    // KV writes
-    kvPutSafe: vi.fn(async (key, value, metadata) => {
-      kv._store.set(key, typeof value === "string" ? value : JSON.stringify(value));
-      if (metadata) kv._meta.set(key, metadata);
-    }),
-    kvDeleteSafe: vi.fn(async (key) => {
-      kv._store.delete(key);
-    }),
-    kvWritePrivileged: vi.fn(async (ops) => {
-      for (const op of ops) {
-        if (op.op === "delete") {
-          kv._store.delete(op.key);
-        } else {
-          kv._store.set(op.key, typeof op.value === "string" ? op.value : JSON.stringify(op.value));
-        }
-      }
-    }),
-
-    // Agent loop
-    runAgentLoop: vi.fn(async () => ({})),
-    executeToolCall: vi.fn(async () => ({})),
-    buildToolDefinitions: vi.fn(async () => []),
-    executeAction: vi.fn(async () => ({})),
-    callHook: vi.fn(async () => null),
-
-    // Karma
-    karmaRecord: vi.fn(async () => {}),
-
-    // Utility
-    resolveModel: vi.fn(async (m) => m),
-    estimateCost: vi.fn(async () => 0),
-    buildPrompt: vi.fn(async (t, v) => t || JSON.stringify(v)),
-    parseAgentOutput: vi.fn(async (c) => (c ? JSON.parse(c) : {})),
-    loadKeys: vi.fn(async (keys) => {
-      const result = {};
-      for (const key of keys) {
-        const val = kv._store.get(key);
-        result[key] = val ? (typeof val === "string" ? JSON.parse(val) : val) : null;
-      }
-      return result;
-    }),
-    getSessionCount: vi.fn(async () => opts.sessionCount || 0),
-    mergeDefaults: vi.fn(async (d, o) => ({ ...d, ...o })),
-    isSystemKey: vi.fn(async (key) => false),
-
-    // State
-    getSessionId: vi.fn(async () => opts.sessionId || "test_session"),
-    getSessionCost: vi.fn(async () => opts.sessionCost || 0),
-    getKarma: vi.fn(async () => opts.karma || []),
-    getDefaults: vi.fn(async () => opts.defaults || {}),
-    getModelsConfig: vi.fn(async () => opts.modelsConfig || null),
-    getDharma: vi.fn(async () => opts.dharma || null),
-    getToolRegistry: vi.fn(async () => opts.toolRegistry || null),
-    elapsed: vi.fn(async () => 0),
-
-    // Internal — expose KV store for assertions
-    _kv: kv,
-  };
-}
+import { makeMockK } from "./helpers/mock-kernel.js";
 
 function makeState(overrides = {}) {
   return {
@@ -552,7 +437,7 @@ describe("detectCrash", () => {
 
   it("returns crash data when stale session exists", async () => {
     const K = makeMockK({
-      session: JSON.stringify("s_dead"),
+      "kernel:active_session": JSON.stringify("s_dead"),
       "karma:s_dead": JSON.stringify([{ event: "session_start" }]),
     });
     const result = await detectCrash(K);
@@ -613,7 +498,59 @@ describe("runCircuitBreaker", () => {
   });
 });
 
-// ── 14. loadReflectHistory ─────────────────────────────────
+// ── 14. getBalances ─────────────────────────────────────────
+
+describe("getBalances", () => {
+  it("calls executeAdapter for each provider and wallet with adapter", async () => {
+    const K = makeMockK({
+      providers: JSON.stringify({
+        openrouter: { adapter: "provider:llm_balance" },
+        manual: { note: "no adapter" },
+      }),
+      wallets: JSON.stringify({
+        base: { adapter: "provider:wallet_balance" },
+      }),
+    });
+    K.executeAdapter.mockResolvedValue(42);
+    const state = makeState();
+
+    const result = await getBalances(K, state);
+
+    expect(K.executeAdapter).toHaveBeenCalledWith("provider:llm_balance", {});
+    expect(K.executeAdapter).toHaveBeenCalledWith("provider:wallet_balance", {});
+    expect(K.executeAdapter).toHaveBeenCalledTimes(2);
+    expect(result.providers.openrouter).toBe(42);
+    expect(result.providers.manual).toBeUndefined();
+    expect(result.wallets.base).toBe(42);
+  });
+
+  it("returns null for adapters that throw", async () => {
+    const K = makeMockK({
+      providers: JSON.stringify({
+        broken: { adapter: "provider:nonexistent" },
+      }),
+      wallets: JSON.stringify({}),
+    });
+    K.executeAdapter.mockRejectedValue(new Error("no adapter"));
+    const state = makeState();
+
+    const result = await getBalances(K, state);
+
+    expect(result.providers.broken).toBeNull();
+  });
+
+  it("returns empty when no providers/wallets configured", async () => {
+    const K = makeMockK();
+    const state = makeState();
+
+    const result = await getBalances(K, state);
+
+    expect(result).toEqual({ providers: {}, wallets: {} });
+    expect(K.executeAdapter).not.toHaveBeenCalled();
+  });
+});
+
+// ── 15. loadReflectHistory ─────────────────────────────────
 
 describe("loadReflectHistory", () => {
   it("uses kvList with prefix filter", async () => {

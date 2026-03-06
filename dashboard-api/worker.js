@@ -15,6 +15,7 @@ function json(data, status = 200) {
 
 function auth(request, env) {
   const key = request.headers.get("X-Operator-Key");
+  console.log("auth debug:", JSON.stringify({ header: key, env: env.OPERATOR_KEY, match: key === env.OPERATOR_KEY }));
   return key && key === env.OPERATOR_KEY;
 }
 
@@ -40,7 +41,7 @@ export default {
           env.KV.get("session_counter", "json"),
           env.KV.get("wake_config", "json"),
           env.KV.get("last_reflect", "json"),
-          env.KV.get("session", "json"),
+          env.KV.get("kernel:active_session", "text"),
         ]);
       return json({ sessionCounter, wakeConfig, lastReflect, session });
     }
@@ -64,7 +65,12 @@ export default {
       const results = {};
       await Promise.all(
         keyList.map(async (key) => {
-          const value = await env.KV.get(key, "json");
+          const { value, metadata } = await env.KV.getWithMetadata(key, "text");
+          if (value === null) { results[key] = null; return; }
+          const format = metadata?.format || "json";
+          if (format === "json") {
+            try { results[key] = JSON.parse(value); return; } catch {}
+          }
           results[key] = value;
         })
       );
@@ -75,14 +81,13 @@ export default {
     const kvMatch = path.match(/^\/kv\/(.+)$/);
     if (kvMatch && path !== "/kv/multi") {
       const key = decodeURIComponent(kvMatch[1]);
-      const value = await env.KV.get(key, "json");
-      if (value === null) {
-        // Try as text fallback
-        const text = await env.KV.get(key, "text");
-        if (text === null) return json({ error: "not found" }, 404);
-        return json({ key, value: text, type: "text" });
+      const { value, metadata } = await env.KV.getWithMetadata(key, "text");
+      if (value === null) return json({ error: "not found" }, 404);
+      const format = metadata?.format || "json";
+      if (format === "json") {
+        try { return json({ key, value: JSON.parse(value), type: "json" }); } catch {}
       }
-      return json({ key, value, type: "json" });
+      return json({ key, value, type: "text" });
     }
 
     return json({ error: "not found" }, 404);

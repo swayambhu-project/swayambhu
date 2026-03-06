@@ -100,9 +100,6 @@ export async function wake(K, input) {
     // 1b. Circuit breaker
     await runCircuitBreaker(K);
 
-    // 1a. Mark session in-progress (crash breadcrumb for next wake)
-    await K.kvPutSafe("session", sessionId);
-
     // 2. Load ground truth
     const [balances, kvUsage] = await Promise.all([
       getBalances(K, state),
@@ -159,9 +156,6 @@ export async function wake(K, input) {
       await runSession(K, state, context, config);
     }
 
-    // 12. Clear crash breadcrumb
-    await K.kvDeleteSafe("session");
-
     return { ok: true };
 
   } catch (err) {
@@ -177,7 +171,7 @@ export async function wake(K, input) {
 // ── Crash detection ─────────────────────────────────────────
 
 export async function detectCrash(K) {
-  const stale = await K.kvGet("session");
+  const stale = await K.kvGet("kernel:active_session");
   if (!stale) return null;
 
   const deadKarma = await K.kvGet(`karma:${stale}`);
@@ -223,7 +217,7 @@ export async function runSession(K, state, context, config) {
   });
 
   // Apply KV operations (gated by protection)
-  if (output.kv_operations) {
+  if (output.kv_operations?.length) {
     for (const op of output.kv_operations) {
       await applyKVOperation(K, op);
     }
@@ -458,7 +452,7 @@ export async function applyReflectOutput(K, state, depth, output, context) {
   const sessionId = await K.getSessionId();
 
   // 1. KV operations (gated by protection)
-  if (output.kv_operations) {
+  if (output.kv_operations?.length) {
     for (const op of output.kv_operations) {
       await applyKVOperation(K, op);
     }
@@ -951,11 +945,20 @@ export async function runCircuitBreaker(K) {
 export async function applyKVOperation(K, op) {
   const key = op.key;
 
+  // Truncate value for karma logging (avoid bloating the log)
+  const valueSummary = op.value != null
+    ? (typeof op.value === 'string'
+        ? (op.value.length > 500 ? op.value.slice(0, 500) + '…' : op.value)
+        : JSON.stringify(op.value).slice(0, 500))
+    : undefined;
+
   if (isSystemKey(key)) {
     await K.karmaRecord({
       event: "mutation_blocked",
       key,
+      op: op.op,
       reason: "system_key",
+      attempted_value: valueSummary,
     });
     return;
   }
@@ -966,7 +969,9 @@ export async function applyKVOperation(K, op) {
     await K.karmaRecord({
       event: "mutation_blocked",
       key,
+      op: op.op,
       reason: "protected_key",
+      attempted_value: valueSummary,
     });
     return;
   }
@@ -1027,29 +1032,15 @@ export async function getBalances(K, state) {
 
   for (const [name, config] of Object.entries(providers || {})) {
     if (!config.adapter) continue;
-    const [code, meta] = await Promise.all([
-      K.kvGet(`${config.adapter}:code`),
-      K.kvGet(`${config.adapter}:meta`),
-    ]);
-    if (!code) continue;
-
     try {
-      balances.providers[name] = await K.executeAction({
-        tool: `_balance_${name}`,
-        input: { provider: config },
-        id: `balance_${name}`,
-      });
+      balances.providers[name] = await K.executeAdapter(config.adapter, {});
     } catch { balances.providers[name] = null; }
   }
 
   for (const [name, config] of Object.entries(wallets || {})) {
     if (!config.adapter) continue;
     try {
-      balances.wallets[name] = await K.executeAction({
-        tool: `_balance_${name}`,
-        input: { wallet: config },
-        id: `balance_${name}`,
-      });
+      balances.wallets[name] = await K.executeAdapter(config.adapter, {});
     } catch { balances.wallets[name] = null; }
   }
 

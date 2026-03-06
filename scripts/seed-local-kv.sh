@@ -7,21 +7,22 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BINDING="KV"
-LOCAL="--local"
+PERSIST_TO=".wrangler/shared-state"
+LOCAL="--local --persist-to $PERSIST_TO"
 
 put_kv() {
-  local key="$1"
-  local file="$2"
-  wrangler kv key put --binding "$BINDING" $LOCAL "$key" --path "$file"
-  echo "  ✓ $key"
+  local key="$1" file="$2" fmt="${3:-json}"
+  wrangler kv key put --binding "$BINDING" $LOCAL "$key" --path "$file" \
+    --metadata "{\"format\":\"$fmt\"}"
+  echo "  ✓ $key ($fmt)"
 }
 
 put_kv_value() {
-  local key="$1"
-  local value="$2"
+  local key="$1" value="$2" fmt="${3:-json}"
   echo -n "$value" > /tmp/_kv_seed_val
-  wrangler kv key put --binding "$BINDING" $LOCAL "$key" --path /tmp/_kv_seed_val
-  echo "  ✓ $key"
+  wrangler kv key put --binding "$BINDING" $LOCAL "$key" --path /tmp/_kv_seed_val \
+    --metadata "{\"format\":\"$fmt\"}"
+  echo "  ✓ $key ($fmt)"
 }
 
 echo "=== Seeding local KV ==="
@@ -54,12 +55,12 @@ echo "--- Config ---"
 cat > /tmp/_kv_seed_val <<'JSONEOF'
 {
   "orient": {
-    "model": "anthropic/claude-opus-4-20250514",
+    "model": "anthropic/claude-opus-4.6",
     "effort": "low",
     "max_output_tokens": 4000
   },
   "reflect": {
-    "model": "anthropic/claude-sonnet-4-5-20250929",
+    "model": "anthropic/claude-sonnet-4.6",
     "effort": "medium",
     "max_output_tokens": 1000
   },
@@ -89,12 +90,12 @@ cat > /tmp/_kv_seed_val <<'JSONEOF'
       "reflect_default": 5,
       "reflect_deep": 10
     },
-    "fallback_model": "anthropic/claude-haiku-4-5-20251001"
+    "fallback_model": "anthropic/claude-haiku-4.5"
   },
   "deep_reflect": {
     "default_interval_sessions": 20,
     "default_interval_days": 7,
-    "model": "anthropic/claude-opus-4-20250514",
+    "model": "anthropic/claude-opus-4.6",
     "effort": "high",
     "max_output_tokens": 4000
   }
@@ -106,7 +107,7 @@ cat > /tmp/_kv_seed_val <<'JSONEOF'
 {
   "models": [
     {
-      "id": "anthropic/claude-opus-4-20250514",
+      "id": "anthropic/claude-opus-4.6",
       "alias": "opus",
       "input_cost_per_mtok": 5.00,
       "output_cost_per_mtok": 25.00,
@@ -114,7 +115,7 @@ cat > /tmp/_kv_seed_val <<'JSONEOF'
       "best_for": "Strategy, novel situations, full situational awareness, deep reflection"
     },
     {
-      "id": "anthropic/claude-sonnet-4-5-20250929",
+      "id": "anthropic/claude-sonnet-4.6",
       "alias": "sonnet",
       "input_cost_per_mtok": 3.00,
       "output_cost_per_mtok": 15.00,
@@ -122,7 +123,7 @@ cat > /tmp/_kv_seed_val <<'JSONEOF'
       "best_for": "Writing, moderate reasoning, reflection, subplan planning"
     },
     {
-      "id": "anthropic/claude-haiku-4-5-20251001",
+      "id": "anthropic/claude-haiku-4.5",
       "alias": "haiku",
       "input_cost_per_mtok": 1.00,
       "output_cost_per_mtok": 5.00,
@@ -130,11 +131,11 @@ cat > /tmp/_kv_seed_val <<'JSONEOF'
       "best_for": "Simple tasks, classification, condition evaluation, cheap execution"
     }
   ],
-  "fallback_model": "anthropic/claude-haiku-4-5-20251001",
+  "fallback_model": "anthropic/claude-haiku-4.5",
   "alias_map": {
-    "opus": "anthropic/claude-opus-4-20250514",
-    "sonnet": "anthropic/claude-sonnet-4-5-20250929",
-    "haiku": "anthropic/claude-haiku-4-5-20251001"
+    "opus": "anthropic/claude-opus-4.6",
+    "sonnet": "anthropic/claude-sonnet-4.6",
+    "haiku": "anthropic/claude-haiku-4.5"
   }
 }
 JSONEOF
@@ -217,209 +218,41 @@ cat > /tmp/_kv_seed_val <<'JSONEOF'
 JSONEOF
 put_kv "config:tool_registry" /tmp/_kv_seed_val
 
-# ── Provider adapters ────────────────────────────────────────
+# ── Provider adapters (from providers/*.js) ──────────────────
 
 echo ""
 echo "--- Providers ---"
 
-# provider:llm
-cat > /tmp/_kv_seed_val <<'EOF'
-async function call({ model, messages, max_tokens, thinking, tools, secrets, fetch }) {
-  const body = { model, max_tokens, messages };
-  if (thinking) {
-    body.provider = { require_parameters: true };
-    body.thinking = thinking;
-  }
-  if (tools) body.tools = tools;
-  const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": "Bearer " + secrets.OPENROUTER_API_KEY,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
-  });
-  const data = await resp.json();
-  if (!resp.ok || data.error) throw new Error(JSON.stringify(data.error));
-  const msg = data.choices?.[0]?.message;
-  return {
-    content: msg?.content || "",
-    usage: data.usage || {},
-    toolCalls: msg?.tool_calls || null,
-  };
-}
-EOF
-put_kv "provider:llm:code" /tmp/_kv_seed_val
-put_kv_value "provider:llm:meta" '{"secrets":["OPENROUTER_API_KEY"],"timeout_ms":60000}'
+put_kv "provider:llm:code" "providers/llm.js" text
+node -e "import('./providers/llm.js').then(m=>process.stdout.write(JSON.stringify(m.meta)))" > /tmp/_kv_seed_val
+put_kv "provider:llm:meta" /tmp/_kv_seed_val
 
-# provider:llm_balance
-cat > /tmp/_kv_seed_val <<'EOF'
-async function check({ secrets, fetch }) {
-  const resp = await fetch("https://openrouter.ai/api/v1/auth/key", {
-    headers: { "Authorization": "Bearer " + secrets.OPENROUTER_API_KEY }
-  });
-  const data = await resp.json();
-  return data?.data?.limit_remaining ?? data?.data?.usage ?? null;
-}
-EOF
-put_kv "provider:llm_balance:code" /tmp/_kv_seed_val
-put_kv_value "provider:llm_balance:meta" '{"secrets":["OPENROUTER_API_KEY"],"timeout_ms":10000}'
+put_kv "provider:llm_balance:code" "providers/llm_balance.js" text
+node -e "import('./providers/llm_balance.js').then(m=>process.stdout.write(JSON.stringify(m.meta)))" > /tmp/_kv_seed_val
+put_kv "provider:llm_balance:meta" /tmp/_kv_seed_val
 
-# provider:wallet_balance
-cat > /tmp/_kv_seed_val <<'EOF'
-async function check({ secrets, fetch }) {
-  const usdc = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-  const wallet = secrets.WALLET_ADDRESS;
-  const data = "0x70a08231" + wallet.slice(2).padStart(64, "0");
-  const resp = await fetch("https://mainnet.base.org", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0", id: 1,
-      method: "eth_call",
-      params: [{ to: usdc, data }, "latest"]
-    })
-  });
-  const result = await resp.json();
-  return parseInt(result.result, 16) / 1e6;
-}
-EOF
-put_kv "provider:wallet_balance:code" /tmp/_kv_seed_val
-put_kv_value "provider:wallet_balance:meta" '{"secrets":["WALLET_ADDRESS"],"timeout_ms":10000}'
+put_kv "provider:wallet_balance:code" "providers/wallet_balance.js" text
+node -e "import('./providers/wallet_balance.js').then(m=>process.stdout.write(JSON.stringify(m.meta)))" > /tmp/_kv_seed_val
+put_kv "provider:wallet_balance:meta" /tmp/_kv_seed_val
 
-# ── Tools ────────────────────────────────────────────────────
+# ── Tools (from tools/*.js) ──────────────────────────────────
 
 echo ""
 echo "--- Tools ---"
 
-# tool:send_telegram
-cat > /tmp/_kv_seed_val <<'EOF'
-async function execute({ text, parse_mode, secrets, fetch }) {
-  const url = `https://api.telegram.org/bot${secrets.TELEGRAM_BOT_TOKEN}/sendMessage`;
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: secrets.TELEGRAM_CHAT_ID,
-      text,
-      parse_mode: parse_mode || "Markdown"
-    })
-  });
-  return resp.json();
-}
-EOF
-put_kv "tool:send_telegram:code" /tmp/_kv_seed_val
-put_kv_value "tool:send_telegram:meta" '{"secrets":["TELEGRAM_BOT_TOKEN","TELEGRAM_CHAT_ID"],"kv_access":"none","timeout_ms":10000}'
-
-# tool:web_fetch
-cat > /tmp/_kv_seed_val <<'EOF'
-async function execute({ url, headers, method, max_length, fetch }) {
-  const resp = await fetch(url, {
-    method: method || "GET",
-    headers: headers || {}
-  });
-  const text = await resp.text();
-  const limit = max_length || 10000;
-  return {
-    status: resp.status,
-    body: text.length > limit ? text.slice(0, limit) + "...[truncated]" : text
-  };
-}
-EOF
-put_kv "tool:web_fetch:code" /tmp/_kv_seed_val
-put_kv_value "tool:web_fetch:meta" '{"secrets":[],"kv_access":"none","timeout_ms":15000}'
-
-# tool:kv_read
-cat > /tmp/_kv_seed_val <<'EOF'
-async function execute({ key, kv }) {
-  const val = await kv.get(key);
-  return { key, value: val };
-}
-EOF
-put_kv "tool:kv_read:code" /tmp/_kv_seed_val
-put_kv_value "tool:kv_read:meta" '{"secrets":[],"kv_access":"read_all","timeout_ms":5000}'
-
-# tool:kv_write
-cat > /tmp/_kv_seed_val <<'EOF'
-async function execute({ key, value, kv }) {
-  await kv.put(key, typeof value === "string" ? value : JSON.stringify(value));
-  return { key, written: true };
-}
-EOF
-put_kv "tool:kv_write:code" /tmp/_kv_seed_val
-put_kv_value "tool:kv_write:meta" '{"secrets":[],"kv_access":"own","timeout_ms":5000}'
-
-# tool:check_or_balance
-cat > /tmp/_kv_seed_val <<'EOF'
-async function execute({ secrets, fetch }) {
-  const resp = await fetch("https://openrouter.ai/api/v1/auth/key", {
-    headers: { "Authorization": `Bearer ${secrets.OPENROUTER_API_KEY}` }
-  });
-  return resp.json();
-}
-EOF
-put_kv "tool:check_or_balance:code" /tmp/_kv_seed_val
-put_kv_value "tool:check_or_balance:meta" '{"secrets":["OPENROUTER_API_KEY"],"kv_access":"none","timeout_ms":10000}'
-
-# tool:check_wallet_balance
-cat > /tmp/_kv_seed_val <<'EOF'
-async function execute({ secrets, fetch }) {
-  const usdc = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-  const wallet = secrets.WALLET_ADDRESS;
-  const data = "0x70a08231" + wallet.slice(2).padStart(64, "0");
-  const resp = await fetch("https://mainnet.base.org", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0", id: 1,
-      method: "eth_call",
-      params: [{ to: usdc, data }, "latest"]
-    })
-  });
-  const result = await resp.json();
-  const raw = parseInt(result.result, 16);
-  return { balance_usdc: raw / 1e6, raw_hex: result.result };
-}
-EOF
-put_kv "tool:check_wallet_balance:code" /tmp/_kv_seed_val
-put_kv_value "tool:check_wallet_balance:meta" '{"secrets":["WALLET_ADDRESS"],"kv_access":"none","timeout_ms":10000}'
-
-# tool:topup_openrouter
-cat > /tmp/_kv_seed_val <<'EOF'
-async function execute({ amount, secrets, fetch }) {
-  return {
-    ok: false,
-    error: "On-chain signing not yet implemented",
-    amount_requested: amount
-  };
-}
-EOF
-put_kv "tool:topup_openrouter:code" /tmp/_kv_seed_val
-put_kv_value "tool:topup_openrouter:meta" '{"secrets":["OPENROUTER_API_KEY","WALLET_PRIVATE_KEY","WALLET_ADDRESS"],"kv_access":"none","timeout_ms":30000}'
-
-# tool:kv_manifest
-cat > /tmp/_kv_seed_val <<'EOF'
-async function execute({ prefix, limit, kv }) {
-  const opts = { limit: Math.min(parseInt(limit) || 100, 500) };
-  if (prefix) opts.prefix = prefix;
-  const result = await kv.list(opts);
-  return {
-    keys: result.keys.map(k => ({ key: k.name, metadata: k.metadata })),
-    list_complete: result.list_complete,
-    count: result.keys.length,
-  };
-}
-EOF
-put_kv "tool:kv_manifest:code" /tmp/_kv_seed_val
-put_kv_value "tool:kv_manifest:meta" '{"secrets":[],"kv_access":"read_all","timeout_ms":5000}'
+for tool in send_telegram web_fetch kv_read kv_write check_or_balance check_wallet_balance topup_openrouter kv_manifest; do
+  put_kv "tool:${tool}:code" "tools/${tool}.js" text
+  node -e "import('./tools/${tool}.js').then(m=>process.stdout.write(JSON.stringify(m.meta)))" > /tmp/_kv_seed_val
+  put_kv "tool:${tool}:meta" /tmp/_kv_seed_val
+done
 
 # ── Prompt templates ─────────────────────────────────────────
 
 echo ""
 echo "--- Prompts ---"
 
-put_kv "prompt:reflect" "prompt-reflect.md"
-put_kv "prompt:reflect:1" "prompt-deep.md"
+put_kv "prompt:reflect" "prompt-reflect.md" text
+put_kv "prompt:reflect:1" "prompt-deep.md" text
 
 cat > /tmp/_kv_seed_val <<'PROMPTEOF'
 You are executing a subgoal. You have tools available via function calling.
@@ -431,7 +264,7 @@ with a "result" field summarizing what you accomplished.
 
 Budget: max {{maxSteps}} turns, max ${{maxCost}}.
 PROMPTEOF
-put_kv "prompt:subplan" /tmp/_kv_seed_val
+put_kv "prompt:subplan" /tmp/_kv_seed_val text
 
 # ── Dharma, orient, wisdom (from remote or placeholder) ────────
 
@@ -449,9 +282,9 @@ if [[ "${1:-}" == "--pull-remote" ]]; then
     fi
   done
 else
-  echo "  Using placeholder values (run with --pull-remote to pull from live KV)"
+  echo "  Using local values (run with --pull-remote to pull orient/wisdom from live KV)"
 
-  put_kv_value "dharma" "I am Swayambhu. I am self-arising. This is a local test instance."
+  put_kv "dharma" "DHARMA.md" text
 
   cat > /tmp/_kv_seed_val <<'PROMPTEOF'
 You are Swayambhu. You have just woken up.
@@ -481,9 +314,9 @@ as a JSON object:
 kv_operations: array of {op: "put"|"delete", key, value} for unprotected keys.
 Protected keys (prompts, config, wisdom) require mutation_requests via reflect.
 PROMPTEOF
-  put_kv "prompt:orient" /tmp/_kv_seed_val
+  put_kv "prompt:orient" /tmp/_kv_seed_val text
 
-  put_kv_value "wisdom" "Local test instance. No accumulated wisdom yet."
+  put_kv_value "wisdom" "Local test instance. No accumulated wisdom yet." text
 fi
 
 # ── Wake hook ────────────────────────────────────────────────
@@ -491,7 +324,7 @@ fi
 echo ""
 echo "--- Wake Hook ---"
 
-put_kv "hook:wake:code" "wake-hook.js"
+put_kv "hook:wake:code" "wake-hook.js" text
 
 # ── Kernel config ────────────────────────────────────────────
 
@@ -511,57 +344,32 @@ cat > /tmp/_kv_seed_val <<'JSONEOF'
 JSONEOF
 put_kv "kernel:alert_config" /tmp/_kv_seed_val
 
-# kernel:llm_fallback — Tier 3 LLM adapter (same isolate pattern as provider:llm)
-cat > /tmp/_kv_seed_val <<'EOF'
-async function call({ model, messages, max_tokens, thinking, tools, secrets, fetch }) {
-  const body = { model, max_tokens, messages };
-  if (thinking) {
-    body.provider = { require_parameters: true };
-    body.thinking = thinking;
-  }
-  if (tools) body.tools = tools;
-  const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": "Bearer " + secrets.OPENROUTER_API_KEY,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
-  });
-  const data = await resp.json();
-  if (!resp.ok || data.error) throw new Error(JSON.stringify(data.error));
-  const msg = data.choices?.[0]?.message;
-  return {
-    content: msg?.content || "",
-    usage: data.usage || {},
-    toolCalls: msg?.tool_calls || null,
-  };
-}
-EOF
-put_kv "kernel:llm_fallback" /tmp/_kv_seed_val
-put_kv_value "kernel:llm_fallback:meta" '{"secrets":["OPENROUTER_API_KEY"],"timeout_ms":60000}'
-put_kv_value "kernel:fallback_model" '"anthropic/claude-haiku-4-5-20251001"'
+# kernel:llm_fallback — Tier 3 LLM adapter (same code as provider:llm)
+put_kv "kernel:llm_fallback" "providers/llm.js" text
+node -e "import('./providers/llm.js').then(m=>process.stdout.write(JSON.stringify(m.meta)))" > /tmp/_kv_seed_val
+put_kv "kernel:llm_fallback:meta" /tmp/_kv_seed_val
+put_kv_value "kernel:fallback_model" '"anthropic/claude-haiku-4.5"'
 
 # ── Reference docs ──────────────────────────────────────────
 
 echo ""
 echo "--- Docs ---"
 
-if [[ -f "doc-mutation-guide.md" ]]; then
-  put_kv "doc:mutation_guide" "doc-mutation-guide.md"
-else
-  echo "  ⚠ doc-mutation-guide.md not found, skipping doc:mutation_guide"
-fi
+put_kv "doc:mutation_guide" "docs/doc-mutation-guide.md" text
+put_kv "doc:architecture" "docs/doc-architecture.md" text
 
 # ── Cleanup ──────────────────────────────────────────────────
 
 rm -f /tmp/_kv_seed_val
 
 echo ""
-echo "=== Done! Local KV seeded with $(wrangler kv key list --binding KV --local 2>/dev/null | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))' 2>/dev/null || echo '?') keys ==="
+echo "=== Done! Local KV seeded ==="
 echo ""
-echo "Start the local worker:"
-echo "  wrangler dev --test-scheduled"
+echo "Start brainstem (port 8787):"
+echo "  source .env && npx wrangler dev --test-scheduled --persist-to .wrangler/shared-state"
+echo ""
+echo "Start dashboard API (port 8790, from dashboard-api/):"
+echo "  npx wrangler dev --port 8790 --persist-to ../.wrangler/shared-state"
 echo ""
 echo "Trigger the cron:"
 echo "  curl http://localhost:8787/__scheduled"
