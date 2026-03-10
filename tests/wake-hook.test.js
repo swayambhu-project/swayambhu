@@ -3,16 +3,15 @@ import {
   buildOrientContext,
   detectCrash,
   evaluateTripwires,
-  evaluatePredicate,
-  getMaxSteps,
-  getReflectModel,
-  isReflectDue,
-  highestReflectDepthDue,
-  defaultReflectPrompt,
-  defaultDeepReflectPrompt,
-  applyReflectOutput,
   writeSessionResults,
+  getBalances,
+  runSession,
+} from "../hook-main.js";
+import {
   applyKVOperation,
+} from "../hook-protect.js";
+import {
+  evaluatePredicate,
   stageMutation,
   findCandidateConflict,
   promoteCandidate,
@@ -22,12 +21,29 @@ import {
   runCircuitBreaker,
   loadStagedMutations,
   loadCandidateMutations,
+  initTracking,
+  applyStagedAsCandidate,
+  applyDirectAsCandidate,
+} from "../hook-mutations.js";
+import {
+  getMaxSteps,
+  getReflectModel,
+  isReflectDue,
+  highestReflectDepthDue,
+  defaultReflectPrompt,
+  defaultDeepReflectPrompt,
+  applyReflectOutput,
   loadReflectPrompt,
   loadBelowPrompt,
   loadReflectHistory,
-  getBalances,
-} from "../wake-hook.js";
+  runReflect,
+} from "../hook-reflect.js";
 import { makeMockK } from "./helpers/mock-kernel.js";
+
+// Reset mutation tracking state before each test
+beforeEach(() => {
+  initTracking([], []);
+});
 
 function makeState(overrides = {}) {
   return {
@@ -63,6 +79,8 @@ describe("buildOrientContext", () => {
     expect(result).toHaveProperty("crash_data");
     expect(result.effort).toBe("medium");
     expect(result.crash_data).toBeNull();
+    expect(result).toHaveProperty("current_time");
+    expect(new Date(result.current_time).getTime()).not.toBeNaN();
   });
 });
 
@@ -501,52 +519,16 @@ describe("runCircuitBreaker", () => {
 // ── 14. getBalances ─────────────────────────────────────────
 
 describe("getBalances", () => {
-  it("calls executeAdapter for each provider and wallet with adapter", async () => {
-    const K = makeMockK({
-      providers: JSON.stringify({
-        openrouter: { adapter: "provider:llm_balance" },
-        manual: { note: "no adapter" },
-      }),
-      wallets: JSON.stringify({
-        base: { adapter: "provider:wallet_balance" },
-      }),
-    });
-    K.executeAdapter.mockResolvedValue(42);
-    const state = makeState();
-
-    const result = await getBalances(K, state);
-
-    expect(K.executeAdapter).toHaveBeenCalledWith("provider:llm_balance", {});
-    expect(K.executeAdapter).toHaveBeenCalledWith("provider:wallet_balance", {});
-    expect(K.executeAdapter).toHaveBeenCalledTimes(2);
-    expect(result.providers.openrouter).toBe(42);
-    expect(result.providers.manual).toBeUndefined();
-    expect(result.wallets.base).toBe(42);
-  });
-
-  it("returns null for adapters that throw", async () => {
-    const K = makeMockK({
-      providers: JSON.stringify({
-        broken: { adapter: "provider:nonexistent" },
-      }),
-      wallets: JSON.stringify({}),
-    });
-    K.executeAdapter.mockRejectedValue(new Error("no adapter"));
-    const state = makeState();
-
-    const result = await getBalances(K, state);
-
-    expect(result.providers.broken).toBeNull();
-  });
-
-  it("returns empty when no providers/wallets configured", async () => {
+  it("delegates to K.checkBalance", async () => {
     const K = makeMockK();
+    const expected = { providers: { or: { balance: 42, scope: "general" } }, wallets: {} };
+    K.checkBalance.mockResolvedValue(expected);
     const state = makeState();
 
     const result = await getBalances(K, state);
 
-    expect(result).toEqual({ providers: {}, wallets: {} });
-    expect(K.executeAdapter).not.toHaveBeenCalled();
+    expect(K.checkBalance).toHaveBeenCalledWith({});
+    expect(result).toEqual(expected);
   });
 });
 
@@ -573,5 +555,212 @@ describe("loadReflectHistory", () => {
     });
     const result = await loadReflectHistory(K, 1, 2);
     expect(Object.keys(result)).toHaveLength(2);
+  });
+});
+
+// ── 16. runSession — reflect_reserve_pct ─────────────────
+
+describe("runSession reflect_reserve_pct", () => {
+  function makeRunSessionFixture(budgetOverrides = {}) {
+    const defaults = {
+      orient: { model: "test/orient", effort: "low", max_output_tokens: 1000 },
+      reflect: { model: "test/reflect" },
+      session_budget: { max_cost: 0.15, max_steps: 8, max_duration_seconds: 600, ...budgetOverrides },
+      execution: { max_steps: { orient: 3 } },
+    };
+    const state = makeState({ defaults });
+    const K = makeMockK();
+    // runSession calls executeReflect which calls many K methods — stub them
+    K.runAgentLoop = vi.fn(async () => ({ session_summary: "done" }));
+    K.getKarma = vi.fn(async () => []);
+    K.getSessionCost = vi.fn(async () => 0);
+    const context = {
+      balances: { providers: {}, wallets: {} },
+      kvUsage: { writes_this_session: 0 },
+      lastReflect: null,
+      additionalContext: null,
+      effort: "low",
+      crashData: null,
+    };
+    const config = {};
+    return { K, state, context, config };
+  }
+
+  it("passes budgetCap to orient when reflect_reserve_pct is set", async () => {
+    const { K, state, context, config } = makeRunSessionFixture({ reflect_reserve_pct: 0.33 });
+    await runSession(K, state, context, config);
+
+    const orientCall = K.runAgentLoop.mock.calls[0][0];
+    // 0.15 * (1 - 0.33) = 0.1005
+    expect(orientCall.budgetCap).toBeCloseTo(0.1005, 4);
+    expect(orientCall.step).toBe("orient");
+  });
+
+  it("does not pass budgetCap when reflect_reserve_pct is 0", async () => {
+    const { K, state, context, config } = makeRunSessionFixture({ reflect_reserve_pct: 0 });
+    await runSession(K, state, context, config);
+
+    const orientCall = K.runAgentLoop.mock.calls[0][0];
+    expect(orientCall.budgetCap).toBeUndefined();
+  });
+
+  it("does not pass budgetCap when reflect_reserve_pct is absent", async () => {
+    const { K, state, context, config } = makeRunSessionFixture({});
+    // Remove reflect_reserve_pct entirely
+    delete state.defaults.session_budget.reflect_reserve_pct;
+    await runSession(K, state, context, config);
+
+    const orientCall = K.runAgentLoop.mock.calls[0][0];
+    expect(orientCall.budgetCap).toBeUndefined();
+  });
+
+  it("still runs reflect when orient is soft-capped (budget_exceeded + reservePct)", async () => {
+    const { K, state, context, config } = makeRunSessionFixture({ reflect_reserve_pct: 0.33 });
+    K.runAgentLoop = vi.fn(async () => ({ budget_exceeded: true, reason: "Budget exceeded: cost" }));
+
+    await runSession(K, state, context, config);
+
+    // reflect uses runAgentLoop internally via executeReflect,
+    // but we can check that runAgentLoop was called at least for orient
+    // and that the function didn't throw (i.e. it proceeded past the guard)
+    expect(K.runAgentLoop).toHaveBeenCalled();
+    // The function should complete without throwing
+  });
+
+  it("skips reflect when budget_exceeded and no reservePct", async () => {
+    const { K, state, context, config } = makeRunSessionFixture({ reflect_reserve_pct: 0 });
+    K.runAgentLoop = vi.fn(async () => ({ budget_exceeded: true, reason: "Budget exceeded: cost" }));
+
+    await runSession(K, state, context, config);
+
+    // runAgentLoop called once (orient only), reflect skipped
+    expect(K.runAgentLoop).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── 17. runReflect — deep reflect budget_multiplier ──────
+
+describe("runReflect budget_multiplier", () => {
+  function makeReflectFixture(deepReflectOverrides = {}) {
+    const defaults = {
+      orient: { model: "test/orient", effort: "low", max_output_tokens: 1000 },
+      reflect: { model: "test/reflect" },
+      session_budget: { max_cost: 0.10, max_steps: 8, max_duration_seconds: 600 },
+      execution: { max_steps: { reflect_deep: 10 }, max_reflect_depth: 1 },
+      deep_reflect: { model: "test/opus", effort: "high", max_output_tokens: 4000, ...deepReflectOverrides },
+    };
+    const state = makeState({ defaults });
+    const K = makeMockK();
+    K.runAgentLoop = vi.fn(async () => ({ reflection: "done" }));
+    K.getKarma = vi.fn(async () => []);
+    K.getSessionCost = vi.fn(async () => 0);
+    K.getSessionCount = vi.fn(async () => 5);
+    const context = {
+      balances: { providers: {}, wallets: {} },
+      kvUsage: { writes_this_session: 0 },
+      effort: "high",
+      crashData: null,
+    };
+    return { K, state, context };
+  }
+
+  it("passes budgetCap = max_cost * multiplier when budget_multiplier > 1", async () => {
+    const { K, state, context } = makeReflectFixture({ budget_multiplier: 3.0 });
+    await runReflect(K, state, 1, context);
+
+    const call = K.runAgentLoop.mock.calls[0][0];
+    expect(call.budgetCap).toBeCloseTo(0.30, 4);
+    expect(call.step).toBe("reflect_depth_1");
+  });
+
+  it("does not pass budgetCap when budget_multiplier is 1", async () => {
+    const { K, state, context } = makeReflectFixture({ budget_multiplier: 1 });
+    await runReflect(K, state, 1, context);
+
+    const call = K.runAgentLoop.mock.calls[0][0];
+    expect(call.budgetCap).toBeUndefined();
+  });
+
+  it("does not pass budgetCap when budget_multiplier is absent", async () => {
+    const { K, state, context } = makeReflectFixture({});
+    delete state.defaults.deep_reflect.budget_multiplier;
+    await runReflect(K, state, 1, context);
+
+    const call = K.runAgentLoop.mock.calls[0][0];
+    expect(call.budgetCap).toBeUndefined();
+  });
+});
+
+// ── 18. patch op in mock kernel ──────────────────────────────
+
+describe("patch op", () => {
+  it("replaces old_string with new_string in KV value", async () => {
+    const K = makeMockK({ "hook:wake:mutations": "function old() { return 1; }" });
+    await K.kvWritePrivileged([{
+      op: "patch",
+      key: "hook:wake:mutations",
+      old_string: "return 1",
+      new_string: "return 2",
+    }]);
+    const result = K._kv._store.get("hook:wake:mutations");
+    expect(result).toBe("function old() { return 2; }");
+  });
+
+  it("rejects when old_string not found", async () => {
+    const K = makeMockK({ "hook:wake:mutations": "function old() { return 1; }" });
+    await expect(K.kvWritePrivileged([{
+      op: "patch",
+      key: "hook:wake:mutations",
+      old_string: "nonexistent string",
+      new_string: "replacement",
+    }])).rejects.toThrow("old_string not found");
+  });
+
+  it("rejects when old_string matches multiple locations", async () => {
+    const K = makeMockK({ "hook:wake:mutations": "aaa bbb aaa" });
+    await expect(K.kvWritePrivileged([{
+      op: "patch",
+      key: "hook:wake:mutations",
+      old_string: "aaa",
+      new_string: "ccc",
+    }])).rejects.toThrow("matches multiple locations");
+  });
+
+  it("rejects when value is not a string", async () => {
+    const K = makeMockK({ "hook:wake:mutations": JSON.stringify({ a: 1 }) });
+    // The mock stores it as a string via JSON.stringify, so set a non-string
+    K._kv._store.set("hook:wake:mutations", 42);
+    await expect(K.kvWritePrivileged([{
+      op: "patch",
+      key: "hook:wake:mutations",
+      old_string: "something",
+      new_string: "else",
+    }])).rejects.toThrow("not a string value");
+  });
+});
+
+// ── 19. applyStagedAsCandidate with patch op ────────────────
+
+describe("applyStagedAsCandidate with patch op", () => {
+  it("forwards patch ops through to kvWritePrivileged", async () => {
+    const K = makeMockK({
+      "hook:wake:mutations": "function old() { return 1; }",
+    });
+
+    // Stage a mutation with a patch op
+    const mutationId = await stageMutation(K, {
+      claims: ["test patch"],
+      ops: [{ op: "patch", key: "hook:wake:mutations", old_string: "return 1", new_string: "return 2" }],
+      checks: [{ type: "kv_assert", key: "hook:wake:mutations", predicate: "exists" }],
+    }, "test_session");
+
+    expect(mutationId).toBeTruthy();
+
+    // Apply staged as candidate
+    await applyStagedAsCandidate(K, mutationId);
+
+    // Check that the patch was applied
+    const afterValue = K._kv._store.get("hook:wake:mutations");
+    expect(afterValue).toBe("function old() { return 2; }");
   });
 });

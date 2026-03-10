@@ -45,13 +45,36 @@ npx wrangler dev --port 8790 --persist-to ../.wrangler/shared-state
 curl http://localhost:8787/__scheduled
 ```
 
+### Waking Swayambhu (preserve state)
+
+When you want to restart workers (e.g., after code changes) without wiping
+KV state, use `wake-now.sh`. It kills stale workers, resets the sleep timer
+so the wake isn't skipped, starts fresh workers, and triggers `/__scheduled`.
+
+```bash
+source .env && bash scripts/wake-now.sh
+```
+
+### IMPORTANT: `taskkill //F //IM workerd.exe` kills ALL workers
+
+This kills both brainstem (8787) and dashboard API (8790). After killing
+workers, always restart BOTH. Don't forget the dashboard.
+
+### Port conflict footgun
+
+When you kill a stale worker and start a new one, the new worker may silently
+bind to a different port (e.g., 8788 instead of 8787) if the old port hasn't
+freed yet. Then `curl localhost:8787` hits the *old* stale process, not your
+new code. `wake-now.sh` avoids this by polling until ports are actually free
+before starting new workers.
+
 ### Ports
 
 | Service        | Port | Notes                                    |
 |----------------|------|------------------------------------------|
 | Brainstem      | 8787 | `--test-scheduled` enables `/__scheduled` |
 | Dashboard API  | 8790 | SPA hardcodes this for localhost          |
-| Dashboard SPA  | 3000 | Static file server (or open index.html)   |
+| Dashboard SPA  | 3001 | `dev-serve.mjs` — no-cache static server  |
 
 ### Dashboard auth
 
@@ -107,6 +130,25 @@ anything needing structured JSON adherence.
 
 ## Code Layout
 
+### Wake hook (modular)
+
+The wake hook is split into 4 ES modules loaded via manifest:
+
+| Source file | KV key | Contents |
+|-------------|--------|----------|
+| `hook-main.js` | `hook:wake:code` | Entry point: `wake()`, `runSession()`, `detectCrash()`, Worker Loader export |
+| `hook-reflect.js` | `hook:wake:reflect` | `executeReflect()`, `runReflect()`, scheduling, default prompts |
+| `hook-mutations.js` | `hook:wake:mutations` | Mutation protocol: staging, candidates, circuit breaker, verdicts |
+| `hook-protect.js` | `hook:wake:protect` | Constants, `isSystemKey()`, `applyKVOperation()` |
+
+Manifest at `hook:wake:manifest` maps filenames to KV keys. The kernel
+loads all modules and passes them to Worker Loader. Dependency graph
+(no cycles): protect ← mutations ← reflect ← main.
+
+Mutations support a `patch` op (`{ op: "patch", key, old_string, new_string }`)
+for surgical find-and-replace edits within a KV value. Rejects if old_string
+is missing or ambiguous. Rollback restores the full pre-patch snapshot.
+
 ### Tools and providers
 
 Tool code lives in `tools/*.js`, provider adapters in `providers/*.js`.
@@ -120,10 +162,22 @@ for `wrapAsModule` compatibility).
 |--------|---------|
 | `source .env && bash scripts/dev-start.sh` | Full reset: seed, cheap models, start all, trigger wake |
 | `source .env && bash scripts/dev-start.sh --prod` | Same, but keeps production models |
+| `source .env && bash scripts/wake-now.sh` | Light restart: kill workers, reset sleep timer, start, trigger wake (no state wipe) |
 | `node scripts/seed-local-kv.mjs` | Fast seed (~2s) — uses Miniflare API directly |
 | `bash scripts/seed-local-kv.sh` | Slow seed — uses wrangler CLI, supports `--pull-remote` |
 | `bash scripts/switch-model.sh <model>` | Swap all LLM roles to a single model in KV |
 | `node scripts/read-kv.mjs [key-or-prefix]` | Inspect local KV (list keys, read values) |
+| `node scripts/rollback-session.mjs` | Undo last session's KV changes (`--dry-run` to preview, `--yes` to skip confirm) |
+
+## Working Style — MANDATORY
+
+**Do NOT make code changes without explicit approval.** When the user asks
+a question or raises an issue, respond with your analysis, thoughts, and
+proposed approach first. Wait for the user to say "yes", "do it", "go ahead",
+or otherwise clearly approve before writing or editing any files. This
+applies to ALL changes — even small ones, even "obvious" fixes. The only
+exception is when the user gives an explicit instruction to implement
+something (e.g. "Implement the following plan:" or "add X to Y").
 
 ## Development Philosophy
 

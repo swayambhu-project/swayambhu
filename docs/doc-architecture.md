@@ -115,6 +115,34 @@ These come from `config:defaults.session_budget` during normal operation. During
 
 When a budget is exceeded, `callLLM` throws `"Budget exceeded: {reason}"`. The agent loop catches this and returns `{ budget_exceeded: true, reason }` instead of crashing.
 
+## Platform Scheduling and Limits
+
+The kernel runs as a Cloudflare Worker. There is no persistent process — CF invokes the Worker on each trigger, it runs, and it exits. State between invocations is stored in KV.
+
+### Cron trigger
+
+CF fires the Worker's `scheduled()` handler every minute (`* * * * *`). The hook's `wake()` checks `wake_config.next_wake_after` and returns immediately (`{ skipped: true }`) if it's not time yet. This means:
+
+- CF controls the **polling frequency** (every minute — not configurable by the agent)
+- The agent controls the **effective wake frequency** via `sleep_seconds` in its reflect output
+- Setting `sleep_seconds: 3600` means ~60 no-op invocations before the agent actually wakes
+
+The no-op invocations are essentially free (one KV read, one timestamp comparison).
+
+### CPU time limit
+
+Because the cron interval is under 1 hour, each invocation gets **30 seconds of CPU time**. This is CPU time only — waiting on network I/O (LLM API calls, KV reads/writes) does not count. If the limit is exceeded, CF kills the Worker mid-execution. This counts as a "killed" outcome in `kernel:last_sessions` and contributes toward the 3-crash tripwire.
+
+For reference, cron intervals ≥ 1 hour get 15 minutes of CPU time, but the minute-level polling means we're in the 30-second tier.
+
+There is no runtime API for the Worker to query its own CPU usage. However, the workload is overwhelmingly I/O-bound (waiting on LLM API responses), so CPU consumption is a small fraction of wall-clock time.
+
+### Wall-clock time limit
+
+Each cron invocation has a **15-minute wall-clock limit** regardless of cron interval. The kernel tracks wall-clock time via `elapsed()` (milliseconds since session start), and `session_budget.max_duration_seconds` is enforced before every LLM call in `callLLM`. Keep `max_duration_seconds` well below 900 (15 min) to ensure sessions exit gracefully before the platform kills them. The current default is 600 seconds (10 min).
+
+`K.elapsed()` is available to the hook at any time for wall-clock awareness.
+
 ## KV Namespace Layout
 
 ### Kernel-only (cannot be written by hook)

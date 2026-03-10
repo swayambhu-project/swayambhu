@@ -8,10 +8,8 @@ import * as send_telegram from "../tools/send_telegram.js";
 import * as web_fetch from "../tools/web_fetch.js";
 import * as kv_read from "../tools/kv_read.js";
 import * as kv_write from "../tools/kv_write.js";
-import * as check_or_balance from "../tools/check_or_balance.js";
-import * as check_wallet_balance from "../tools/check_wallet_balance.js";
-import * as topup_openrouter from "../tools/topup_openrouter.js";
 import * as kv_manifest from "../tools/kv_manifest.js";
+import * as karma_query from "../tools/karma_query.js";
 
 // ── Provider modules ─────────────────────────────────────────
 
@@ -52,7 +50,7 @@ function mockKV(initial = {}) {
 
 const allTools = {
   send_telegram, web_fetch, kv_read, kv_write,
-  check_or_balance, check_wallet_balance, topup_openrouter, kv_manifest,
+  kv_manifest, karma_query,
 };
 
 const allProviders = { llm, llm_balance, wallet_balance };
@@ -165,45 +163,6 @@ describe("kv_write", () => {
   });
 });
 
-describe("check_or_balance", () => {
-  it("calls OpenRouter auth endpoint", async () => {
-    const f = mockFetch({ data: { limit_remaining: 5.0 } });
-    const result = await check_or_balance.execute({
-      secrets: { OPENROUTER_API_KEY: "test-key" },
-      fetch: f,
-    });
-    expect(result.data.limit_remaining).toBe(5.0);
-    const headers = f.mock.calls[0][1].headers;
-    expect(headers.Authorization).toContain("test-key");
-  });
-});
-
-describe("check_wallet_balance", () => {
-  it("calls Base RPC and returns USDC balance", async () => {
-    const hexBalance = "0x" + (1000000).toString(16).padStart(64, "0"); // 1 USDC
-    const f = mockFetch({ result: hexBalance });
-    const result = await check_wallet_balance.execute({
-      secrets: { WALLET_ADDRESS: "0x" + "ab".repeat(20) },
-      fetch: f,
-    });
-    expect(result.balance_usdc).toBe(1);
-    expect(result.raw_hex).toBe(hexBalance);
-  });
-});
-
-describe("topup_openrouter", () => {
-  it("returns not-implemented stub", async () => {
-    const result = await topup_openrouter.execute({
-      amount: 10,
-      secrets: {},
-      fetch: mockFetch({}),
-    });
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("not yet implemented");
-    expect(result.amount_requested).toBe(10);
-  });
-});
-
 describe("kv_manifest", () => {
   it("lists keys with default limit", async () => {
     const kv = mockKV({ "a:1": "v1", "a:2": "v2", "b:1": "v3" });
@@ -254,5 +213,119 @@ describe("provider:wallet_balance", () => {
       fetch: f,
     });
     expect(result).toBe(5);
+  });
+});
+
+// ── 5. karma_query tests ──────────────────────────────────────
+
+const SAMPLE_KARMA = [
+  { event: "session_start", session_id: "s_123", effort: "low" },
+  {
+    event: "llm_call", step: "orient_turn_0", ok: true,
+    request: { model: "anthropic/claude-opus-4.6", messages: [{ role: "system", content: "long..." }] },
+    response: { content: "hello" },
+    tool_calls: [
+      { type: "function", function: { name: "kv_manifest", arguments: "{}" } },
+      { type: "function", function: { name: "check_balance", arguments: "{}" } },
+    ],
+    cost: 0.0155,
+  },
+  { event: "tool_result", tool: "kv_manifest", ok: true },
+];
+
+describe("karma_query", () => {
+  function karmaKV(sessionId, karma) {
+    return mockKV({ [`karma:${sessionId}`]: karma });
+  }
+
+  it("returns error for missing session param", async () => {
+    const result = await karma_query.execute({ kv: mockKV() });
+    expect(result.error).toContain("missing required param");
+  });
+
+  it("returns error for missing session in KV", async () => {
+    const result = await karma_query.execute({ session: "s_none", kv: mockKV() });
+    expect(result.error).toContain("no karma found");
+  });
+
+  it("returns event index with no path", async () => {
+    const kv = karmaKV("s_123", SAMPLE_KARMA);
+    const result = await karma_query.execute({ session: "s_123", kv });
+    expect(result.count).toBe(3);
+    expect(result.events).toHaveLength(3);
+    expect(result.events[0]).toBe("0: session_start");
+    expect(result.events[1]).toContain("llm_call");
+    expect(result.events[1]).toContain("orient_turn_0");
+    expect(result.events[1]).toContain("ok=true");
+  });
+
+  it("returns object summary for [1]", async () => {
+    const kv = karmaKV("s_123", SAMPLE_KARMA);
+    const result = await karma_query.execute({ session: "s_123", path: "[1]", kv });
+    expect(result.type).toBe("object");
+    expect(result.fields.event).toBe('"llm_call"');
+    expect(result.fields.cost).toBe("0.0155");
+    expect(result.fields.tool_calls).toContain("array");
+    expect(result.fields.request).toContain("object");
+  });
+
+  it("returns array summary for [1].tool_calls", async () => {
+    const kv = karmaKV("s_123", SAMPLE_KARMA);
+    const result = await karma_query.execute({ session: "s_123", path: "[1].tool_calls", kv });
+    expect(result.type).toBe("array");
+    expect(result.count).toBe(2);
+    expect(result.items[0]).toContain("kv_manifest");
+    expect(result.items[1]).toContain("check_balance");
+  });
+
+  it("returns leaf value for deep path", async () => {
+    const kv = karmaKV("s_123", SAMPLE_KARMA);
+    const result = await karma_query.execute({
+      session: "s_123",
+      path: "[1].tool_calls[0].function.name",
+      kv,
+    });
+    expect(result.value).toBe("kv_manifest");
+  });
+
+  it("returns leaf for numeric value", async () => {
+    const kv = karmaKV("s_123", SAMPLE_KARMA);
+    const result = await karma_query.execute({ session: "s_123", path: "[1].cost", kv });
+    expect(result.value).toBe(0.0155);
+  });
+
+  it("returns error for out-of-bounds index", async () => {
+    const kv = karmaKV("s_123", SAMPLE_KARMA);
+    const result = await karma_query.execute({ session: "s_123", path: "[99]", kv });
+    expect(result.error).toContain("out of bounds");
+  });
+
+  it("returns error with available_keys for missing key", async () => {
+    const kv = karmaKV("s_123", SAMPLE_KARMA);
+    const result = await karma_query.execute({ session: "s_123", path: "[0].nonexistent", kv });
+    expect(result.error).toContain("not found");
+    expect(result.available_keys).toContain("event");
+  });
+
+  it("returns error for bad path syntax", async () => {
+    const kv = karmaKV("s_123", SAMPLE_KARMA);
+    const result = await karma_query.execute({ session: "s_123", path: "[abc]", kv });
+    expect(result.error).toContain("non-numeric");
+  });
+
+  it("truncates long strings with full_length", async () => {
+    const longKarma = [{ event: "test", data: "x".repeat(200) }];
+    const kv = karmaKV("s_long", longKarma);
+    const result = await karma_query.execute({ session: "s_long", path: "[0].data", kv });
+    expect(result.value.length).toBeLessThan(200);
+    expect(result.full_length).toBe(200);
+  });
+
+  it("handles string-encoded karma (JSON string in KV)", async () => {
+    const kv = mockKV({ "karma:s_str": JSON.stringify(SAMPLE_KARMA) });
+    // mockKV.get returns raw value — but real KV might return parsed or string
+    // karma_query handles both cases
+    const result = await karma_query.execute({ session: "s_str", kv });
+    expect(result.count).toBe(3);
   });
 });

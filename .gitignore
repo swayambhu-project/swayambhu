@@ -27,3 +27,7 @@ screenshots/
 
 # Dev containers
 .devcontainer/
+
+# Temp / test artifacts
+tmp/
+test-results/

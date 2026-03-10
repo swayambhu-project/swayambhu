@@ -24,6 +24,12 @@ This is the only way to modify system keys. For each operation in the array you 
 
 If any write targets a `hook:*` key, the kernel sends an alert to the human custodian. You cannot prevent or suppress this alert.
 
+Supported operations:
+
+- `{ op: "put", key, value, metadata }` — write a value (default if `op` is omitted)
+- `{ op: "delete", key }` — delete a key
+- `{ op: "patch", key, old_string, new_string }` — find-and-replace within a string value
+
 Usage:
 ```javascript
 await K.kvWritePrivileged([
@@ -32,35 +38,79 @@ await K.kvWritePrivileged([
 ]);
 ```
 
+### The `patch` op
+
+The `patch` op performs a surgical find-and-replace within an existing string value. This is the preferred way to modify hook modules — instead of rewriting an entire module, you replace only the specific function or block you want to change.
+
+```javascript
+await K.kvWritePrivileged([{
+  op: "patch",
+  key: "hook:wake:mutations",
+  old_string: "export async function runCircuitBreaker(K) {\n  // old logic\n}",
+  new_string: "export async function runCircuitBreaker(K) {\n  // improved logic\n}",
+}]);
+```
+
+Safety constraints:
+- **Rejects if value isn't a string** — can't patch JSON objects, only code/text
+- **Rejects if `old_string` not found** — catches hallucinated content; you must match the actual current code exactly
+- **Rejects if `old_string` matches multiple locations** — the patch must be unambiguous; include enough surrounding context to match exactly one location
+
+The karma snapshot (step 2 above) captures the full pre-patch value, so rollback restores the complete original content regardless of how the patch changed it.
+
+**Best practice:** Before generating a patch, read the target key with `K.kvGet()` to confirm the exact current content. Copy the precise text you want to replace — don't paraphrase or reformat it.
+
 ## Hook Architecture
 
-Your wake session logic lives in `hook:wake:code` (and optionally additional modules). The kernel loads this code, executes it in an isolate, and provides the kernel RPC handle (`K`) as your interface.
+Your wake session logic is split into 4 ES modules loaded via a manifest. The kernel loads all modules, passes them to a Worker Loader isolate, and provides the kernel RPC handle (`K`) as your interface.
 
-### Single Module (Day 1)
+### Module Layout
 
-The kernel reads `hook:wake:code` and runs it as a single module. All your session logic — wake flow, reflect, mutation protocol, circuit breaker — is in one file.
+| KV key | Filename in isolate | Contents |
+|--------|-------------------|----------|
+| `hook:wake:code` | `main` | Entry point: `wake()`, `runSession()`, `detectCrash()`, Worker Loader export |
+| `hook:wake:reflect` | `hook-reflect.js` | `executeReflect()`, `runReflect()`, scheduling, default prompts |
+| `hook:wake:mutations` | `hook-mutations.js` | Mutation protocol: staging, candidates, circuit breaker, verdicts |
+| `hook:wake:protect` | `hook-protect.js` | Constants (`SYSTEM_KEY_PREFIXES`, etc.), `isSystemKey()`, `applyKVOperation()` |
 
-### Multi-Module (via Manifest)
+### Manifest
 
-The kernel checks for `hook:wake:manifest` before loading. If it exists, it describes how to assemble multiple modules:
+The manifest at `hook:wake:manifest` maps filenames to KV keys:
 
 ```json
 {
   "main": "hook:wake:code",
-  "reflect.js": "hook:wake:reflect",
-  "mutation.js": "hook:wake:mutation",
-  "circuit.js": "hook:wake:circuit"
+  "hook-reflect.js": "hook:wake:reflect",
+  "hook-mutations.js": "hook:wake:mutations",
+  "hook-protect.js": "hook:wake:protect"
 }
 ```
 
-Each value is a KV key containing module code. The keys in the manifest become filenames in the Worker Loader isolate. The main module can import from other modules:
+The kernel reads this manifest, fetches each module's code from KV, and assembles them into a Worker Loader isolate. The `"main"` entry is the entry point.
+
+### Dependency Graph (no cycles)
+
+```
+hook-protect.js    ← standalone (constants, protection gate)
+hook-mutations.js  ← imports from hook-protect.js
+hook-reflect.js    ← imports from hook-mutations.js, hook-protect.js
+main               ← imports from all three
+```
+
+Modules import each other using relative paths:
 
 ```javascript
-import { runReflect, executeReflect } from './reflect.js';
-import { stageMutation, applyStagedAsCandidate } from './mutation.js';
+// In main (hook:wake:code)
+import { applyKVOperation } from './hook-protect.js';
+import { initTracking, runCircuitBreaker } from './hook-mutations.js';
+import { executeReflect, runReflect, highestReflectDepthDue } from './hook-reflect.js';
 ```
 
 All `hook:wake:*` keys are system keys — every write goes through `kvWritePrivileged` with snapshot and alert.
+
+### Why Modules Matter for Self-Modification
+
+Each module is ~50-300 lines. With the `patch` op, you can modify a single function within a single module without touching the others. A targeted patch to `hook:wake:mutations` (~300 lines) is far safer than rewriting the entire hook (~1100 lines). If the patch crashes, the tripwire restores all modules from `kernel:last_good_hook`.
 
 ## Safety Mechanisms
 
@@ -85,41 +135,54 @@ Every `kvWritePrivileged` write to a `hook:wake:*` key triggers `sendKernelAlert
 
 ## Strategy for Safe Modification
 
-### Extract First, Modify Second
+### Prefer `patch` Over `put`
 
-Never modify a function inside a large module. Instead:
+The `patch` op lets you change a specific function or block without rewriting the entire module. This is almost always better than a full `put`:
 
-**Session 1** — Extract the function to its own module:
-- Write the function as a new `hook:wake:functionname` key
-- Update `hook:wake:code` to import from the new module instead of containing the function inline
-- Write `hook:wake:manifest` (or update it if it already exists)
-- All three writes in one `kvWritePrivileged` call
+```javascript
+// Read the current module to get exact text
+const code = await K.kvGet("hook:wake:mutations");
 
-Wait for a clean session to confirm the extraction didn't break anything. The kernel snapshots the new multi-module structure as `kernel:last_good_hook`.
+// Patch a specific function
+await K.kvWritePrivileged([{
+  op: "patch",
+  key: "hook:wake:mutations",
+  old_string: "export async function runCircuitBreaker(K) {\n  const lastDanger = await K.kvGet(\"last_danger\");\n  if (!lastDanger) return;\n  // ... rest of function\n}",
+  new_string: "export async function runCircuitBreaker(K) {\n  // improved implementation\n}",
+}]);
+```
 
-**Session 2** — Modify the extracted module:
-- Write only `hook:wake:functionname` with the updated logic
-- One small, targeted write
+If you need to add a new function (not replace an existing one), use `patch` to insert it at a specific location — match a known anchor point (like the last line of a section comment) and replace it with itself plus the new function.
 
-If this crashes, the tripwire restores the Session 1 version (extraction without modification). Your extraction is preserved; only the bad change is reverted.
+### When to Use `put` Instead
+
+Use `put` to replace an entire module only when:
+- The module is small (<100 lines) and the change touches most of it
+- You're adding a brand-new module (new KV key + manifest update)
+- A `patch` would be ambiguous (the old_string appears in multiple places)
+
+When adding a new module, update all three in one `kvWritePrivileged` call:
+1. The new module code (`put`)
+2. The entry point or importing module (`patch` to add the import)
+3. The manifest (`put` with the updated mapping)
 
 ### One Change Per Session
 
 Each session that modifies hook code is a test. If it runs clean, the kernel snapshots it as the new baseline. If it crashes, you revert to the previous baseline. Stacking multiple changes in one session means you can't isolate which change caused a failure.
 
-### Keep Modules Small
+### Keep Modules Focused
 
-A 50-line module is easy to regenerate correctly. A 500-line module is not. When you extract functions, prefer small, focused modules — one concern per file. A parse error in a 50-line output is unlikely; in a 1000-line output it's almost guaranteed eventually.
+Each module has one concern: protection, mutations, reflection, or session flow. If a module grows past ~400 lines, consider extracting a new module. A parse error in a 50-line patch is unlikely; in a 1000-line full rewrite it's almost guaranteed eventually.
 
 ### Test Your Understanding
 
-Before modifying, read the current code via `K.kvGet("hook:wake:code")` (or the specific module key). Confirm you understand the current state before generating a replacement. Do not write code based on assumptions about what the module contains.
+Before modifying, read the target module via `K.kvGet("hook:wake:mutations")` (or whichever key). Confirm you understand the current state before generating a patch. The `patch` op will reject if your `old_string` doesn't match — but catching this early saves a wasted privileged write.
 
 ## What Not To Do
 
-**Do not rewrite `hook:wake:code` in full.** If you're generating 1000+ lines, the probability of a syntax error or subtle logic bug is high. Extract and modify surgically instead.
+**Do not rewrite a module in full when a `patch` will do.** Generating an entire 300-line module from scratch has a high probability of syntax errors or subtle logic bugs. Use `patch` to change only what you need.
 
-**Do not modify multiple interdependent modules in one session.** If module A imports from module B and you change both, a bug in either crashes the system and you can't tell which caused it.
+**Do not modify multiple interdependent modules in one session.** If `hook-reflect.js` imports from `hook-mutations.js` and you change both, a bug in either crashes the system and you can't tell which caused it.
 
 **Do not remove deep reflect from the hook.** Deep reflect is the mechanism that reviews your own changes. Removing it eliminates your ability to evaluate whether your modifications are working. The human custodian will be alerted (hook write alert), but you will have lost your own self-correction capability.
 
@@ -138,4 +201,4 @@ In fallback mode you have limited capabilities: one basic orient session with a 
 
 ## Summary
 
-The system is designed so that self-modification is safe by default: every change is snapshotted, every hook write is alerted, crashes auto-revert, and the kernel enforces write protection regardless of what your hook code does. Work with these mechanisms, not around them. Small, incremental, verifiable changes — each confirmed clean before the next.
+The system is designed so that self-modification is safe by default: every change is snapshotted, every hook write is alerted, crashes auto-revert, and the kernel enforces write protection regardless of what your hook code does. The modular hook structure and `patch` op make targeted changes practical — you can modify a single function in a single module without touching anything else. Work with these mechanisms, not around them. Small, incremental, verifiable changes — each confirmed clean before the next.

@@ -11,11 +11,11 @@ binding = "LOADER"
 binding = "KV"
 id = "05720444f9654ed4985fb67af4aea24d"
 
-# Cron trigger — default every 6 hours, but Swayambhu controls effective
-# wake frequency via wake_config.sleep_seconds and the brainstem's
-# "should I actually wake up?" check
+# Cron trigger — every minute. The hook checks wake_config.next_wake_after
+# and goes back to sleep if it's not time yet. This gives the agent
+# fine-grained control over its own wake frequency via sleep_seconds.
 [triggers]
-crons = ["0 */6 * * *"]
+crons = ["* * * * *"]
 
 # Secrets (set via: wrangler secret put SECRET_NAME)
 # OPENROUTER_API_KEY

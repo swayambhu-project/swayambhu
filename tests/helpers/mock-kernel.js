@@ -38,6 +38,18 @@ export function makeMockK(kvInit = {}, opts = {}) {
       for (const op of ops) {
         if (op.op === "delete") {
           kv._store.delete(op.key);
+        } else if (op.op === "patch") {
+          const current = kv._store.get(op.key) ?? null;
+          if (typeof current !== "string") {
+            throw new Error(`patch op: key "${op.key}" is not a string value`);
+          }
+          if (!current.includes(op.old_string)) {
+            throw new Error(`patch op: old_string not found in "${op.key}"`);
+          }
+          if (current.indexOf(op.old_string) !== current.lastIndexOf(op.old_string)) {
+            throw new Error(`patch op: old_string matches multiple locations in "${op.key}"`);
+          }
+          kv._store.set(op.key, current.replace(op.old_string, op.new_string));
         } else {
           kv._store.set(op.key, typeof op.value === "string" ? op.value : JSON.stringify(op.value));
         }
@@ -50,6 +62,7 @@ export function makeMockK(kvInit = {}, opts = {}) {
     buildToolDefinitions: vi.fn(async () => []),
     executeAction: vi.fn(async () => ({})),
     executeAdapter: vi.fn(async () => ({})),
+    checkBalance: vi.fn(async () => ({ providers: {}, wallets: {} })),
     callHook: vi.fn(async () => null),
 
     // Karma

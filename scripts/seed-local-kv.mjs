@@ -28,11 +28,13 @@ const kv = await mf.getKVNamespace("KV");
 
 let count = 0;
 
-async function put(key, value, format = "json") {
+async function put(key, value, format = "json", description) {
   const val = typeof value === "object" && format === "json"
     ? JSON.stringify(value)
     : value;
-  await kv.put(key, val, { metadata: { format } });
+  const metadata = { format };
+  if (description) metadata.description = description;
+  await kv.put(key, val, { metadata });
   count++;
 }
 
@@ -51,7 +53,7 @@ await put("identity:did", {
   created_at: "2026-03-02T11:39:35.915Z",
   dharma_hash: null,
   controller: "0xde2c9b784177dafd667b83a631b0de79a68a584e",
-});
+}, "json", "On-chain identity (DID, address, chain, registry)");
 
 // ── Config ────────────────────────────────────────────────────
 
@@ -59,7 +61,15 @@ console.log("--- Config ---");
 await put("config:defaults", {
   orient: { model: "anthropic/claude-opus-4.6", effort: "low", max_output_tokens: 4000 },
   reflect: { model: "anthropic/claude-sonnet-4.6", effort: "medium", max_output_tokens: 1000 },
-  session_budget: { max_cost: 0.10, max_steps: 8, max_duration_seconds: 600 },
+  session_budget: { max_cost: 0.15, max_steps: 8, max_duration_seconds: 600, reflect_reserve_pct: 0.33 },
+  chat: {
+    model: "sonnet",
+    effort: "low",
+    max_cost_per_conversation: 0.50,
+    max_tool_rounds: 5,
+    max_output_tokens: 1000,
+    max_history_messages: 40,
+  },
   failure_handling: { retries: 1, on_fail: "skip_and_cascade" },
   wake: { sleep_seconds: 21600, default_effort: "low" },
   memory: { default_load_keys: ["wisdom", "config:models", "config:resources"], max_context_budget_tokens: 8000 },
@@ -69,10 +79,10 @@ await put("config:defaults", {
     fallback_model: "anthropic/claude-haiku-4.5",
   },
   deep_reflect: {
-    default_interval_sessions: 20, default_interval_days: 7,
-    model: "anthropic/claude-opus-4.6", effort: "high", max_output_tokens: 4000,
+    default_interval_sessions: 5, default_interval_days: 7,
+    model: "anthropic/claude-opus-4.6", effort: "high", max_output_tokens: 4000, budget_multiplier: 3.0,
   },
-});
+}, "json", "Session budgets, model roles, effort levels, execution limits");
 
 await put("config:models", {
   models: [
@@ -82,7 +92,7 @@ await put("config:models", {
   ],
   fallback_model: "anthropic/claude-haiku-4.5",
   alias_map: { opus: "anthropic/claude-opus-4.6", sonnet: "anthropic/claude-sonnet-4.6", haiku: "anthropic/claude-haiku-4.5" },
-});
+}, "json", "Available LLM models with pricing, aliases, and capabilities");
 
 await put("config:resources", {
   kv: { max_storage_mb: 1000, daily_read_limit: 100000, daily_write_limit: 1000, daily_list_limit: 1000, daily_delete_limit: 1000, max_value_size_mb: 25 },
@@ -90,15 +100,15 @@ await put("config:resources", {
   openrouter: { base_url: "https://openrouter.ai/api/v1", balance_endpoint: "/api/v1/auth/key", topup_endpoint: "/api/v1/credits/coinbase", topup_fee_percent: 5, topup_chain: "base", topup_chain_id: 8453 },
   wallet: { chain: "base", token: "USDC", address: "0x1951e298f9Aa7eFf5eB0dD5349e823BBB09a3260" },
   telegram: { bot_token_secret: "TELEGRAM_BOT_TOKEN", chat_id_secret: "TELEGRAM_CHAT_ID" },
-});
+}, "json", "Platform limits and external service endpoints (KV, worker, OpenRouter, wallet, Telegram)");
 
 await put("providers", {
-  openrouter: { provider: "openrouter", adapter: "provider:llm_balance", secret_name: "OPENROUTER_API_KEY", secret_store: "env" },
-});
+  openrouter: { adapter: "provider:llm_balance", scope: "general" },
+}, "json", "Registered LLM providers with adapter bindings and scope");
 
 await put("wallets", {
-  base_usdc: { network: "base", adapter: "provider:wallet_balance", address: "0x1951e298f9Aa7eFf5eB0dD5349e823BBB09a3260" },
-});
+  base_usdc: { adapter: "provider:wallet_balance", scope: "general" },
+}, "json", "Registered crypto wallets with adapter bindings and scope");
 
 // ── Tool registry ─────────────────────────────────────────────
 
@@ -108,21 +118,23 @@ await put("config:tool_registry", {
     { name: "web_fetch", description: "Fetch contents of a URL", input: { url: "required", method: "GET|POST", headers: "optional", max_length: "default 10000" } },
     { name: "kv_read", description: "Read a value from memory (any key)", input: { key: "required" } },
     { name: "kv_write", description: "Write to tool's own KV namespace", input: { key: "required", value: "required" } },
-    { name: "check_or_balance", description: "Check current OpenRouter credit balance", input: {} },
-    { name: "check_wallet_balance", description: "Check USDC balance on Base", input: {} },
-    { name: "topup_openrouter", description: "Transfer USDC from wallet to OpenRouter credits", input: { amount: "USD amount, required" } },
+    { name: "check_balance", description: "Check balances across all configured providers and wallets. Returns balances grouped by scope (general vs project-specific). Only 'general' scope counts toward your operating budget.", input: { scope: "optional — filter by scope (e.g. 'general', 'project_x'). Omit to see all." } },
     { name: "kv_manifest", description: "List KV keys, optionally filtered by prefix. Use to explore what is stored in memory.", input: { prefix: "optional key prefix filter", limit: "max keys to return (default 100, max 500)" } },
+    { name: "karma_query", description: "Lazily traverse a session's karma log using dot-bracket path expressions. Returns one level of depth per call — use progressively deeper paths to drill into events.", input: { session: "required — session ID (e.g. s_1709123456_abc)", path: "optional — dot-bracket path (e.g. [1].tool_calls[0].function)" } },
+    { name: "akash_exec", description: "Run a shell command on the akash Linux server. Returns status, exit code, and output (stdout/stderr entries).", input: { command: "required — shell command to run", timeout: "optional — seconds to wait (default 60)" } },
+    { name: "check_email", description: "Check for unread emails in Gmail inbox. Returns sender, subject, date, and snippet for each.", input: { mark_read: "optional boolean — mark fetched emails as read (default false)", max_results: "optional — max emails to return (default 10, max 20)" } },
+    { name: "send_email", description: "Send an email or reply to an existing thread via Gmail.", input: { to: "required — recipient email address", subject: "required (unless replying)", body: "required — plain text email body", reply_to_id: "optional — Gmail message ID to reply to (threads the reply)" } },
   ],
-});
+}, "json", "Tool definitions — names, descriptions, and input schemas for function calling");
 
 // ── Providers (from providers/*.js) ───────────────────────────
 
 console.log("--- Providers ---");
-const providerFiles = ["llm", "llm_balance", "wallet_balance"];
+const providerFiles = ["llm", "llm_balance", "wallet_balance", "gmail"];
 for (const name of providerFiles) {
   const mod = await importLocal(`providers/${name}.js`);
-  await put(`provider:${name}:code`, read(`providers/${name}.js`), "text");
-  await put(`provider:${name}:meta`, mod.meta);
+  await put(`provider:${name}:code`, read(`providers/${name}.js`), "text", `Provider source: ${name}`);
+  await put(`provider:${name}:meta`, mod.meta, "json", `Provider metadata: ${name}`);
 }
 
 // ── Tools (from tools/*.js) ───────────────────────────────────
@@ -130,60 +142,63 @@ for (const name of providerFiles) {
 console.log("--- Tools ---");
 const toolNames = [
   "send_telegram", "web_fetch", "kv_read", "kv_write",
-  "check_or_balance", "check_wallet_balance", "topup_openrouter", "kv_manifest",
+  "kv_manifest", "karma_query", "akash_exec",
+  "check_email", "send_email",
 ];
 for (const name of toolNames) {
   const mod = await importLocal(`tools/${name}.js`);
-  await put(`tool:${name}:code`, read(`tools/${name}.js`), "text");
-  await put(`tool:${name}:meta`, mod.meta);
+  await put(`tool:${name}:code`, read(`tools/${name}.js`), "text", `Tool source: ${name}`);
+  await put(`tool:${name}:meta`, mod.meta, "json", `Tool metadata: ${name}`);
 }
 
 // ── Prompts ───────────────────────────────────────────────────
 
 console.log("--- Prompts ---");
-await put("prompt:reflect", read("prompt-reflect.md"), "text");
-await put("prompt:reflect:1", read("prompt-deep.md"), "text");
+await put("prompt:orient", read("prompts/orient.md"), "text", "Orient session system prompt — shapes waking behavior");
+await put("prompt:subplan", read("prompts/subplan.md"), "text", "Subplan agent system prompt template");
+await put("prompt:reflect", read("prompts/reflect.md"), "text", "Session-level reflection prompt (depth 0)");
+await put("prompt:reflect:1", read("prompts/deep-reflect.md"), "text", "Deep reflection prompt (depth 1) — examines alignment, patterns, structures");
 
-await put("prompt:subplan", "You are executing a subgoal. You have tools available via function calling.\n\nGoal: {{goal}}\n\nUse your tools to accomplish this goal. When done, produce a JSON object\nwith a \"result\" field summarizing what you accomplished.\n\nBudget: max {{maxSteps}} turns, max ${{maxCost}}.", "text");
-
-// ── Dharma, orient, wisdom ────────────────────────────────────
+// ── Dharma, wisdom ────────────────────────────────────────────
 
 console.log("--- Identity ---");
-await put("dharma", read("DHARMA.md"), "text");
+await put("dharma", read("DHARMA.md"), "text", "Core identity and purpose — what Swayambhu is and why it exists");
+await put("wisdom", "", "text", "Accumulated insights from past reflections — grows over time");
 
-await put("prompt:orient", `You are Swayambhu. You have just woken up.
-
-Your dharma: {{dharma}}
-
-## Available tools
-
-You have tools available via function calling. Use them to act on the world:
-check balances, search the web, send messages, read/write memory.
-
-To run independent tasks in parallel, call spawn_subplan multiple times in
-a single turn. Each spawns a nested agent with its own tool access.
-
-## What to do
-
-Orient yourself using the context provided. Then act — check what needs
-checking, do what needs doing. When you're done, produce your final output
-as a JSON object:
-
-{
-  "session_summary": "What you did and why",
-  "kv_operations": [],
-  "next_wake_config": { "sleep_seconds": 21600, "effort": "low" }
-}
-
-kv_operations: array of {op: "put"|"delete", key, value} for unprotected keys.
-Protected keys (prompts, config, wisdom) require mutation_requests via reflect.`, "text");
-
-await put("wisdom", "", "text");
-
-// ── Wake hook ─────────────────────────────────────────────────
+// ── Wake hook (modular) ───────────────────────────────────────
 
 console.log("--- Wake Hook ---");
-await put("hook:wake:code", read("wake-hook.js"), "text");
+await put("hook:wake:code", read("hook-main.js"), "text", "Wake hook entry point — wake flow, session, crash detection");
+await put("hook:wake:reflect", read("hook-reflect.js"), "text", "Wake hook reflect module — session/deep reflect, scheduling, prompts");
+await put("hook:wake:mutations", read("hook-mutations.js"), "text", "Wake hook mutations module — staging, candidates, circuit breaker");
+await put("hook:wake:protect", read("hook-protect.js"), "text", "Wake hook protect module — constants, protection gate");
+await put("hook:wake:manifest", {
+  "main": "hook:wake:code",
+  "hook-reflect.js": "hook:wake:reflect",
+  "hook-mutations.js": "hook:wake:mutations",
+  "hook-protect.js": "hook:wake:protect",
+}, "json", "Wake hook module manifest — maps filenames to KV keys");
+
+// ── Channel adapters ──────────────────────────────────────────
+
+console.log("--- Channel Adapters ---");
+await put("channel:telegram:code", read("channels/telegram.js"), "text", "Telegram channel adapter");
+await put("channel:telegram:config", {
+  secrets: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"],
+  webhook_secret_env: "TELEGRAM_WEBHOOK_SECRET",
+}, "json", "Telegram channel config");
+
+// ── Chat prompt ───────────────────────────────────────────────
+
+console.log("--- Chat ---");
+await put("prompt:chat", [
+  "",
+  "",
+  "You are in a live chat session. Respond conversationally and concisely.",
+  "Use tools when the user asks about balances, KV state, or anything that",
+  "requires looking up data. Keep replies short — this is real-time chat,",
+  "not a report.",
+].join("\n"), "text", "Chat system prompt — shapes real-time conversation style");
 
 // ── Kernel config ─────────────────────────────────────────────
 
@@ -192,18 +207,18 @@ await put("kernel:alert_config", {
   url: "https://api.telegram.org/bot{{TELEGRAM_BOT_TOKEN}}/sendMessage",
   headers: { "Content-Type": "application/json" },
   body_template: { chat_id: "{{TELEGRAM_CHAT_ID}}", text: "[Swayambhu] {{event}}: {{message}}", parse_mode: "HTML" },
-});
+}, "json", "Telegram alert template for kernel events");
 
-await put("kernel:llm_fallback", read("providers/llm.js"), "text");
+await put("kernel:llm_fallback", read("providers/llm.js"), "text", "Fallback LLM provider source code");
 const llmMod = await importLocal("providers/llm.js");
-await put("kernel:llm_fallback:meta", llmMod.meta);
-await put("kernel:fallback_model", '"anthropic/claude-haiku-4.5"');
+await put("kernel:llm_fallback:meta", llmMod.meta, "json", "Fallback LLM provider metadata");
+await put("kernel:fallback_model", '"anthropic/claude-haiku-4.5"', "json", "Model used when primary LLM call fails");
 
 // ── Reference docs ────────────────────────────────────────────
 
 console.log("--- Docs ---");
-await put("doc:mutation_guide", read("docs/doc-mutation-guide.md"), "text");
-await put("doc:architecture", read("docs/doc-architecture.md"), "text");
+await put("doc:mutation_guide", read("docs/doc-mutation-guide.md"), "text", "Reference: how the mutation protocol works (staging, candidates, rollback)");
+await put("doc:architecture", read("docs/doc-architecture.md"), "text", "Reference: system architecture overview (kernel, hooks, KV, tools)");
 
 // ── Done ──────────────────────────────────────────────────────
 

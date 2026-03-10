@@ -7,5 +7,6 @@ compatibility_flags = ["nodejs_compat"]
 binding = "KV"
 id = "05720444f9654ed4985fb67af4aea24d"
 
+# Cron trigger — every minute (same as prod, see wrangler.toml)
 [triggers]
-crons = ["0 */6 * * *"]
+crons = ["* * * * *"]

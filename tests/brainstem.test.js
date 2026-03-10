@@ -55,6 +55,73 @@ describe("parseAgentOutput", () => {
     const result = await brain.parseAgentOutput("not json");
     expect(result).toEqual({ parse_error: true, raw: "not json" });
   });
+
+  it("extracts JSON from markdown code fences", async () => {
+    const { brain } = makeBrain();
+    brain.callHook = vi.fn(async () => null);
+    const result = await brain.parseAgentOutput('```json\n{"key":"value"}\n```');
+    expect(result).toEqual({ key: "value" });
+    expect(brain.callHook).not.toHaveBeenCalled();
+  });
+
+  it("extracts JSON from prose with surrounding text", async () => {
+    const { brain } = makeBrain();
+    brain.callHook = vi.fn(async () => null);
+    const result = await brain.parseAgentOutput('Here is my output:\n{"key":"value"}\nDone.');
+    expect(result).toEqual({ key: "value" });
+  });
+});
+
+// ── 1b. _extractJSON ─────────────────────────────────────────
+
+describe("_extractJSON", () => {
+  const { brain } = makeBrain();
+
+  it("returns null for null/undefined/empty", () => {
+    expect(brain._extractJSON(null)).toBeNull();
+    expect(brain._extractJSON(undefined)).toBeNull();
+    expect(brain._extractJSON("")).toBeNull();
+  });
+
+  it("extracts from ```json fences", () => {
+    expect(brain._extractJSON('```json\n{"a":1}\n```')).toEqual({ a: 1 });
+  });
+
+  it("extracts from bare ``` fences", () => {
+    expect(brain._extractJSON('```\n{"a":1}\n```')).toEqual({ a: 1 });
+  });
+
+  it("extracts object from surrounding prose", () => {
+    expect(brain._extractJSON('Here is the result:\n{"a":1,"b":"two"}\nEnd.')).toEqual({ a: 1, b: "two" });
+  });
+
+  it("extracts array from surrounding prose", () => {
+    expect(brain._extractJSON('Result: [1,2,3] done')).toEqual([1, 2, 3]);
+  });
+
+  it("handles nested braces", () => {
+    expect(brain._extractJSON('```json\n{"a":{"b":{"c":1}}}\n```')).toEqual({ a: { b: { c: 1 } } });
+  });
+
+  it("handles braces inside strings", () => {
+    expect(brain._extractJSON('{"msg":"use {curly} braces","n":1}')).toEqual({ msg: "use {curly} braces", n: 1 });
+  });
+
+  it("handles escaped quotes inside strings", () => {
+    expect(brain._extractJSON('{"msg":"say \\"hello\\"","n":1}')).toEqual({ msg: 'say "hello"', n: 1 });
+  });
+
+  it("returns null for no JSON content", () => {
+    expect(brain._extractJSON("just some text")).toBeNull();
+  });
+
+  it("handles real-world reflect output with fences", () => {
+    const input = '```json\n{\n  "session_summary": "Short orient session",\n  "note_to_future_self": "Check last_sessions first"\n}\n```';
+    expect(brain._extractJSON(input)).toEqual({
+      session_summary: "Short orient session",
+      note_to_future_self: "Check last_sessions first",
+    });
+  });
 });
 
 // ── 2. buildToolDefinitions ─────────────────────────────────
@@ -1332,5 +1399,133 @@ describe("runScheduled manifest loading", () => {
 
     expect(brain.executeHook).not.toHaveBeenCalled();
     expect(brain.wake).toHaveBeenCalled();
+  });
+});
+
+// ── checkBalance ──────────────────────────────────────────────
+
+describe("checkBalance", () => {
+  it("iterates providers and wallets, calls executeAdapter for each", async () => {
+    const { brain } = makeBrain({
+      providers: JSON.stringify({
+        openrouter: { adapter: "provider:llm_balance", scope: "general" },
+        no_adapter: { note: "manual" },
+      }),
+      wallets: JSON.stringify({
+        base: { adapter: "provider:wallet_balance", scope: "general" },
+      }),
+    });
+    brain.executeAdapter = vi.fn(async () => 42);
+
+    const result = await brain.checkBalance({});
+
+    expect(brain.executeAdapter).toHaveBeenCalledTimes(2);
+    expect(result.providers.openrouter).toEqual({ balance: 42, scope: "general" });
+    expect(result.providers.no_adapter).toBeUndefined();
+    expect(result.wallets.base).toEqual({ balance: 42, scope: "general" });
+  });
+
+  it("filters by scope", async () => {
+    const { brain } = makeBrain({
+      providers: JSON.stringify({
+        main: { adapter: "provider:llm_balance", scope: "general" },
+        proj: { adapter: "provider:llm_balance", scope: "project_x" },
+      }),
+      wallets: JSON.stringify({}),
+    });
+    brain.executeAdapter = vi.fn(async () => 10);
+
+    const result = await brain.checkBalance({ scope: "general" });
+
+    expect(brain.executeAdapter).toHaveBeenCalledTimes(1);
+    expect(result.providers.main).toEqual({ balance: 10, scope: "general" });
+    expect(result.providers.proj).toBeUndefined();
+  });
+
+  it("returns error for failing adapters", async () => {
+    const { brain } = makeBrain({
+      providers: JSON.stringify({
+        broken: { adapter: "provider:bad", scope: "general" },
+      }),
+      wallets: JSON.stringify({}),
+    });
+    brain.executeAdapter = vi.fn(async () => { throw new Error("no code"); });
+
+    const result = await brain.checkBalance({});
+
+    expect(result.providers.broken).toEqual({ balance: null, scope: "general", error: "no code" });
+  });
+
+});
+
+// ── callLLM budgetCap ──────────────────────────────────────
+
+describe("callLLM budgetCap", () => {
+  function makeLLMBrain(sessionCost, budget, budgetCap) {
+    const { brain } = makeBrain();
+    brain.sessionCost = sessionCost;
+    brain.sessionLLMCalls = 0;
+    brain.defaults = { session_budget: budget };
+    brain.startTime = Date.now();
+    brain.elapsed = () => 0;
+    brain.callWithCascade = vi.fn(async () => ({
+      ok: true, content: "hi", usage: { prompt_tokens: 10, completion_tokens: 5 },
+      tier: "primary",
+    }));
+    brain.estimateCost = () => 0.01;
+    brain.karmaRecord = vi.fn(async () => {});
+    return brain;
+  }
+
+  it("uses session_budget.max_cost when no budgetCap", async () => {
+    const brain = makeLLMBrain(0.14, { max_cost: 0.15 });
+    // 0.14 < 0.15 — should succeed
+    await expect(brain.callLLM({
+      model: "test", messages: [{ role: "user", content: "hi" }], step: "t",
+    })).resolves.toBeDefined();
+  });
+
+  it("throws when sessionCost >= budgetCap", async () => {
+    const brain = makeLLMBrain(0.10, { max_cost: 0.15 });
+    await expect(brain.callLLM({
+      model: "test", messages: [{ role: "user", content: "hi" }], step: "t",
+      budgetCap: 0.10,
+    })).rejects.toThrow("Budget exceeded: cost");
+  });
+
+  it("allows call when sessionCost < budgetCap even if close to max_cost", async () => {
+    const brain = makeLLMBrain(0.09, { max_cost: 0.15 });
+    // budgetCap=0.10, sessionCost=0.09 < 0.10 — should succeed
+    await expect(brain.callLLM({
+      model: "test", messages: [{ role: "user", content: "hi" }], step: "t",
+      budgetCap: 0.10,
+    })).resolves.toBeDefined();
+  });
+
+  it("budgetCap overrides max_cost (lower cap)", async () => {
+    const brain = makeLLMBrain(0.08, { max_cost: 0.15 });
+    // Without budgetCap: 0.08 < 0.15, would succeed
+    // With budgetCap=0.05: 0.08 >= 0.05, should fail
+    await expect(brain.callLLM({
+      model: "test", messages: [{ role: "user", content: "hi" }], step: "t",
+      budgetCap: 0.05,
+    })).rejects.toThrow("Budget exceeded: cost");
+  });
+
+  it("resolves kv: secret overrides", async () => {
+    const { brain } = makeBrain({
+      providers: JSON.stringify({
+        proj: { adapter: "provider:llm_balance", scope: "project_x", secrets: { OPENROUTER_API_KEY: "kv:secret:proj_key" } },
+      }),
+      wallets: JSON.stringify({}),
+      "secret:proj_key": JSON.stringify("sk-proj-12345"),
+    });
+    brain.executeAdapter = vi.fn(async () => 99);
+
+    await brain.checkBalance({});
+
+    // executeAdapter should have been called with resolved secret overrides
+    const overrides = brain.executeAdapter.mock.calls[0][2];
+    expect(overrides).toEqual({ OPENROUTER_API_KEY: "sk-proj-12345" });
   });
 });
