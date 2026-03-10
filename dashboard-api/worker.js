@@ -2,7 +2,7 @@
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, X-Operator-Key",
 };
 
@@ -29,31 +29,92 @@ export default {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
+    // GET /reflections — public, no auth required
+    if (path === "/reflections") {
+      const result = await env.KV.list({ prefix: "reflect:1:" });
+      const keys = result.keys
+        .filter(k => !k.name.startsWith("reflect:1:schedule"))
+        .sort((a, b) => b.name.localeCompare(a.name));
+      const reflections = await Promise.all(
+        keys.slice(0, 20).map(async (k) => {
+          const data = await env.KV.get(k.name, "json");
+          if (!data) return null;
+          return {
+            session_id: data.session_id,
+            timestamp: data.timestamp,
+            reflection: data.reflection,
+            note_to_future_self: data.note_to_future_self,
+          };
+        })
+      );
+      return json({ reflections: reflections.filter(Boolean) });
+    }
+
     // All other routes require auth
     if (!auth(request, env)) {
       return json({ error: "unauthorized" }, 401);
     }
 
+    // POST /wake — trigger brainstem wake cycle
+    if (path === "/wake" && request.method === "POST") {
+      const brainstemUrl = env.BRAINSTEM_URL || "http://localhost:8787";
+      try {
+        const resp = await fetch(`${brainstemUrl}/__scheduled`);
+        const text = await resp.text();
+        return json({ ok: resp.ok, status: resp.status, body: text });
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 502);
+      }
+    }
+
     // GET /health — system status snapshot
     if (path === "/health") {
-      const [sessionCounter, wakeConfig, lastReflect, session] =
+      const [sessionCounter, wakeConfig, lastReflect, activeSession, session] =
         await Promise.all([
           env.KV.get("session_counter", "json"),
           env.KV.get("wake_config", "json"),
           env.KV.get("last_reflect", "json"),
           env.KV.get("kernel:active_session", "text"),
+          env.KV.get("session", "text"),
         ]);
-      return json({ sessionCounter, wakeConfig, lastReflect, session });
+      return json({ sessionCounter, wakeConfig, lastReflect, session: activeSession || session });
     }
 
-    // GET /kv — cached key index, optional ?prefix= filter
+    // GET /sessions — discover all sessions (orient + deep reflect)
+    if (path === "/sessions") {
+      const [karmaList, reflectList, cached] = await Promise.all([
+        env.KV.list({ prefix: "karma:" }),
+        env.KV.list({ prefix: "reflect:1:" }),
+        env.KV.get("cache:session_ids", "json"),
+      ]);
+
+      // Build set of deep reflect session IDs from reflect:1:* keys
+      const deepReflectIds = new Set(
+        reflectList.keys.map(k => k.name.replace("reflect:1:", ""))
+      );
+
+      // Build session list from karma keys (ground truth)
+      const sessions = karmaList.keys.map(k => {
+        const id = k.name.replace("karma:", "");
+        return {
+          id,
+          type: deepReflectIds.has(id) ? "deep_reflect" : "orient",
+          ts: k.metadata?.updated_at || null,
+        };
+      });
+
+      // Sort by session ID (contains timestamp) — newest last
+      sessions.sort((a, b) => a.id.localeCompare(b.id));
+
+      return json({ sessions });
+    }
+
+    // GET /kv — key listing, optional ?prefix= filter
+    //   Always uses live KV.list() — no cache dependency.
     if (path === "/kv") {
-      const index = await env.KV.get("cache:kv_index", "json");
-      if (!index) return json({ keys: [] });
-      const prefix = url.searchParams.get("prefix");
-      const keys = prefix
-        ? index.filter((e) => e.key.startsWith(prefix))
-        : index;
+      const prefix = url.searchParams.get("prefix") || undefined;
+      const result = await env.KV.list({ prefix });
+      const keys = result.keys.map(k => ({ key: k.name, metadata: k.metadata }));
       return json({ keys });
     }
 

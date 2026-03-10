@@ -8,10 +8,12 @@
 # Starts:
 #   Brainstem      http://localhost:8787
 #   Dashboard API  http://localhost:8790
-#   Dashboard SPA  http://localhost:3000
+#   Dashboard SPA  http://localhost:3001
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+SPA_PORT=3001
 
 PROD=false
 if [[ "${1:-}" == "--prod" ]]; then
@@ -59,20 +61,8 @@ echo "=== Starting dashboard API (port 8790) ==="
 (cd dashboard-api && npx wrangler dev --port 8790 --persist-to ../.wrangler/shared-state) &
 PIDS+=($!)
 
-echo "=== Starting dashboard SPA (port 3000) ==="
-node -e "
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const dir = path.resolve('site/operator');
-const mime = { '.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png','.json':'application/json' };
-http.createServer((req, res) => {
-  const file = path.join(dir, req.url === '/' ? 'index.html' : req.url);
-  if (!fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { 'Content-Type': mime[path.extname(file)]||'text/plain', 'Cache-Control': 'no-store' });
-  fs.createReadStream(file).pipe(res);
-}).listen(3000, () => console.log('SPA: http://localhost:3000'));
-" &
+echo "=== Starting dashboard SPA (port $SPA_PORT) ==="
+node scripts/dev-serve.mjs "$SPA_PORT" &
 PIDS+=($!)
 
 # ── 6. Wait for brainstem, then trigger wake ───────────────────
@@ -93,7 +83,7 @@ echo ""
 echo "=== Running ==="
 echo "  Brainstem:      http://localhost:8787"
 echo "  Dashboard API:  http://localhost:8790"
-echo "  Dashboard SPA:  http://localhost:3000"
+echo "  Dashboard SPA:  http://localhost:$SPA_PORT/operator/"
 echo ""
 echo "  Wake again: curl http://localhost:8787/__scheduled"
 echo "  Stop:       Ctrl+C"

@@ -24,6 +24,8 @@
             border: '#1e1e3a',
             accent: '#f59e0b',
             'accent-dim': 'rgba(245, 158, 11, 0.12)',
+            'deep': '#a78bfa',
+            'deep-dim': 'rgba(167, 139, 250, 0.15)',
           },
           fontFamily: {
             mono: ['JetBrains Mono', 'monospace'],
@@ -102,20 +104,30 @@
       return new Date(ts).toLocaleString(LOCALE, opts);
     }
 
-    const API_URL = location.hostname === 'localhost'
+    const API_URL = (location.hostname === 'localhost' || location.protocol === 'file:')
       ? 'http://localhost:8790'
       : 'https://swayambhu-dashboard-api.swayambhu1.workers.dev';
 
     // ── API helpers ───────────────────────────────────────────
     const kvReadCount = { current: 0 };
 
-    async function api(path, key) {
+    async function api(path, key, timeoutMs = 8000) {
       kvReadCount.current++;
-      const res = await fetch(`${API_URL}${path}`, {
-        headers: { 'X-Operator-Key': key },
-      });
-      if (res.status === 401) throw new Error('UNAUTHORIZED');
-      return res.json();
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(`${API_URL}${path}`, {
+          headers: { 'X-Operator-Key': key },
+          signal: ctrl.signal,
+        });
+        if (res.status === 401) throw new Error('UNAUTHORIZED');
+        return await res.json();
+      } catch (err) {
+        if (err.name === 'AbortError') throw new Error('TIMEOUT');
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
     }
 
     // Browser-side cache for stable keys
@@ -171,7 +183,7 @@
       const displayText = expanded || text.length <= limit ? text : text.slice(0, limit) + '…';
 
       if (text.length <= limit && !hasToggle) {
-        return <span className="text-green-400 break-all whitespace-pre-wrap leading-relaxed">"{text}"</span>;
+        return <span className="text-green-400 [overflow-wrap:anywhere] whitespace-pre-wrap leading-relaxed">"{text}"</span>;
       }
 
       const nextMode = mode === 'raw' ? (isCode ? 'code' : 'rendered') : 'raw';
@@ -193,7 +205,7 @@
               dangerouslySetInnerHTML={{ __html: marked.parse(displayText) }}
             />
           ) : (
-            <span className="text-green-400 break-all whitespace-pre-wrap leading-relaxed">
+            <span className="text-green-400 [overflow-wrap:anywhere] whitespace-pre-wrap leading-relaxed">
               "{displayText}"
             </span>
           )}
@@ -211,7 +223,7 @@
       if (data === null || data === undefined) return <span className="text-gray-500">null</span>;
       if (typeof data === 'string') {
         if (data.length > TRUNCATE_JSON) return <ExpandableString text={data} />;
-        return <span className="text-green-400 break-all whitespace-pre-wrap leading-relaxed">"{data}"</span>;
+        return <span className="text-green-400 [overflow-wrap:anywhere] whitespace-pre-wrap leading-relaxed">"{data}"</span>;
       }
       if (typeof data === 'number') return <span className="text-amber-400">{data}</span>;
       if (typeof data === 'boolean') return <span className="text-purple-400">{String(data)}</span>;
@@ -249,6 +261,97 @@
         );
       }
       return <span>{String(data)}</span>;
+    }
+
+    function JsonTreeString({ text }) {
+      const [expanded, setExpanded] = useState(false);
+
+      // Detect JSON strings and offer to render as a tree
+      const parsed = useMemo(() => {
+        if (text.length < 2) return null;
+        const c = text[0];
+        if (c !== '{' && c !== '[') return null;
+        try { return JSON.parse(text); } catch { return null; }
+      }, [text]);
+
+      if (parsed) {
+        return <JsonTree data={parsed} />;
+      }
+
+      const long = text.length > 120;
+      const display = long && !expanded ? text.slice(0, 120) + '...' : text;
+      return (
+        <>
+          <span className="text-green-400 [overflow-wrap:anywhere] whitespace-pre-wrap">"{display}"</span>
+          {long && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+              className="text-accent/70 hover:text-accent text-[10px] underline ml-1"
+            >{expanded ? 'less' : `(${text.length} chars)`}</button>
+          )}
+        </>
+      );
+    }
+
+    // Collapsible JSON tree — nodes start collapsed, click to expand
+    function JsonTree({ data, label, defaultOpen = false }) {
+      const [open, setOpen] = useState(defaultOpen);
+
+      if (data === null || data === undefined) {
+        return <span className="text-gray-500">{label ? <><span className="text-cyan-400">"{label}"</span><span className="text-gray-500">: </span></> : null}null</span>;
+      }
+      const labelEl = label != null
+        ? <><span className={typeof label === 'number' ? "text-gray-400" : "text-cyan-400"}>{typeof label === 'number' ? label : `"${label}"`}</span><span className="text-gray-500">: </span></>
+        : null;
+
+      if (typeof data === 'string') {
+        return (
+          <div className="leading-relaxed">
+            {labelEl}
+            <JsonTreeString text={data} />
+          </div>
+        );
+      }
+      if (typeof data === 'number') {
+        return <div>{labelEl}<span className="text-amber-400">{data}</span></div>;
+      }
+      if (typeof data === 'boolean') {
+        return <div>{labelEl}<span className="text-purple-400">{String(data)}</span></div>;
+      }
+
+      const isArray = Array.isArray(data);
+      const entries = isArray ? data.map((v, i) => [i, v]) : Object.entries(data);
+      const isEmpty = entries.length === 0;
+      const preview = isArray ? `[${entries.length}]` : `{${entries.length}}`;
+
+      if (isEmpty) {
+        return (
+          <div>
+            {label && <><span className="text-cyan-400">"{label}"</span><span className="text-gray-500">: </span></>}
+            <span className="text-gray-500">{isArray ? '[]' : '{}'}</span>
+          </div>
+        );
+      }
+
+      return (
+        <div>
+          <div
+            onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+            className="cursor-pointer hover:bg-white/5 rounded px-1 -mx-1 select-none"
+          >
+            <span className="text-gray-500 inline-block w-3 text-center">{open ? '▾' : '▸'}</span>
+            {label != null && <><span className={isArray && typeof label === 'number' ? "text-gray-400" : "text-cyan-400"}>{typeof label === 'number' ? label : `"${label}"`}</span><span className="text-gray-500">: </span></>}
+            <span className="text-gray-500">{preview}</span>
+          </div>
+          {open && (
+            <div className="ml-4 border-l border-gray-800 pl-2">
+              {entries.map(([k, v]) => (
+                <JsonTree key={k} data={v} label={k} defaultOpen={entries.length === 1} />
+              ))}
+            </div>
+          )}
+        </div>
+      );
     }
 
     // ── Login screen ──────────────────────────────────────────
@@ -298,7 +401,7 @@
 
     // ── Timeline Tab ──────────────────────────────────────────
     function TimelineTab({ operatorKey, onSelectEntry }) {
-      const [sessionIds, setSessionIds] = useState([]);
+      const [sessions, setSessions] = useState([]);       // [{id, type, ts}]
       const [selectedSession, setSelectedSession] = useState(null);
       const [karma, setKarma] = useState([]);
       const [loading, setLoading] = useState(false);
@@ -306,24 +409,32 @@
       const watchRef = useRef(null);
       const karmaRef = useRef([]);
 
+      // Map session ID → type for color lookup
+      const sessionTypeMap = useMemo(() => {
+        const m = {};
+        sessions.forEach(s => { m[s.id] = s.type; });
+        return m;
+      }, [sessions]);
+
       const refreshSessions = useCallback(async () => {
         try {
-          // Try cache:session_ids first
+          const d = await api('/sessions', operatorKey);
+          const list = d.sessions || [];
+          if (list.length > 0) {
+            setSessions(list);
+            setSelectedSession(prev => prev || list[list.length - 1].id);
+            return list;
+          }
+        } catch {}
+        // Fallback: try cache:session_ids
+        try {
           const d = await api('/kv/cache:session_ids', operatorKey);
           const ids = d.value || [];
           if (ids.length > 0) {
-            setSessionIds(ids);
+            const list = ids.map(id => ({ id, type: 'orient', ts: null }));
+            setSessions(list);
             setSelectedSession(prev => prev || ids[ids.length - 1]);
-            return ids;
-          }
-        } catch {}
-        // Fallback: check active session key
-        try {
-          const s = await api('/kv/session', operatorKey);
-          if (s.value) {
-            setSessionIds([s.value]);
-            setSelectedSession(prev => prev || s.value);
-            return [s.value];
+            return list;
           }
         } catch {}
         return [];
@@ -346,11 +457,9 @@
           const d = await api(`/kv/karma:${sid}`, operatorKey);
           if (d.error) {
             // Session not found — refresh session list
-            const fresh = await api('/kv/cache:session_ids', operatorKey);
-            const ids = fresh.value || [];
-            setSessionIds(ids);
-            if (ids.length > 0 && !ids.includes(sid)) {
-              setSelectedSession(ids[ids.length - 1]);
+            const fresh = await refreshSessions();
+            if (fresh.length > 0 && !fresh.some(s => s.id === sid)) {
+              setSelectedSession(fresh[fresh.length - 1].id);
             }
             setKarma([]); karmaRef.current = [];
             setLoading(false);
@@ -384,11 +493,9 @@
               const d = await api(`/kv/karma:${selectedSession}`, operatorKey);
               if (d.error) {
                 // Session no longer exists (e.g. KV wiped) — refresh session list
-                const fresh = await api('/kv/cache:session_ids', operatorKey);
-                const ids = fresh.value || [];
-                setSessionIds(ids);
-                if (ids.length > 0) {
-                  setSelectedSession(ids[ids.length - 1]);
+                const fresh = await refreshSessions();
+                if (fresh.length > 0) {
+                  setSelectedSession(fresh[fresh.length - 1].id);
                 }
                 clearInterval(watchRef.current);
                 watchRef.current = null;
@@ -420,16 +527,13 @@
       const [selectedIdx, setSelectedIdx] = useState(null);
       const pairs = useMemo(() => {
         const map = {};
-        const pending = {}; // tool name -> [indices of unmatched starts]
+        const byStepId = {}; // step_id -> index of tool_start
         karma.forEach((e, i) => {
           if (e.type === 'tool_call' || e.type === 'tool_start') {
-            const t = e.tool;
-            if (!pending[t]) pending[t] = [];
-            pending[t].push(i);
+            if (e.step_id) byStepId[e.step_id] = i;
           } else if (e.type === 'tool_complete' || e.type === 'tool_result') {
-            const t = e.tool;
-            if (pending[t]?.length) {
-              const startIdx = pending[t].shift();
+            const startIdx = e.step_id ? byStepId[e.step_id] : undefined;
+            if (startIdx != null) {
               map[startIdx] = i;
               map[i] = startIdx;
             }
@@ -460,12 +564,21 @@
             <select
               value={selectedSession || ''}
               onChange={(e) => setSelectedSession(e.target.value)}
-              className="bg-bg border border-border rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-accent"
+              className={`bg-bg border rounded px-2 py-1 text-xs focus:outline-none ${
+                sessionTypeMap[selectedSession] === 'deep_reflect'
+                  ? 'border-purple-600 text-purple-300 focus:border-deep'
+                  : 'border-border text-gray-300 focus:border-accent'
+              }`}
             >
-              {sessionIds.map(sid => (
-                <option key={sid} value={sid}>{sid}</option>
+              {sessions.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.type === 'deep_reflect' ? '\u25C6 ' : ''}{s.id}
+                </option>
               ))}
             </select>
+            {sessionTypeMap[selectedSession] === 'deep_reflect' && (
+              <span className="text-deep text-[10px] font-semibold px-1.5 py-0.5 bg-deep-dim rounded">DEEP REFLECT</span>
+            )}
             <button
               onClick={toggleWatch}
               className={`px-2 py-1 rounded font-semibold border transition ${
@@ -605,35 +718,8 @@
       );
     }
 
-    function DetailField({ label, value, color }) {
-      if (value === undefined || value === null) return null;
-      const textColor = color || 'text-gray-300';
-      return (
-        <div className="mb-3">
-          <div className="text-gray-500 text-xs mb-1">{label}</div>
-          <div className="bg-bg rounded p-2 text-xs overflow-x-auto">
-            {typeof value === 'string' ? (
-              <ExpandableText text={value} color={textColor} />
-            ) : (
-              <JsonView data={value} />
-            )}
-          </div>
-        </div>
-      );
-    }
-
     // ── Context Panel ─────────────────────────────────────────
     function ContextPanel({ operatorKey, selectedEntry }) {
-      const [toolRegistry, setToolRegistry] = useState(null);
-      const [showRaw, setShowRaw] = useState(false);
-
-      // Load tool registry once
-      useEffect(() => {
-        cachedApi('/kv/config:tool_registry', operatorKey)
-          .then(d => setToolRegistry(d.value))
-          .catch(() => {});
-      }, [operatorKey]);
-
       if (!selectedEntry) {
         return (
           <div className="h-full flex items-center justify-center p-4">
@@ -646,14 +732,10 @@
 
       const entry = selectedEntry;
       const c = eventColor(entry.type);
-      const toolDesc = toolRegistry?.tools?.find(t => t.name === entry.tool);
-
-      // Parse input/result summaries (stored as JSON strings)
-      const parseJSON = (s) => { if (typeof s !== 'string') return s; try { return JSON.parse(s); } catch { return s; } };
 
       return (
         <div className="h-full flex flex-col">
-          {/* Pinned header — always visible */}
+          {/* Pinned header */}
           <div className={`flex-shrink-0 ${c.bg} border ${c.border} rounded px-3 py-2 m-4 mb-0`}>
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${c.dot}`}></span>
@@ -665,9 +747,6 @@
             {entry.tool && (
               <div className="mt-1 ml-4">
                 <span className="text-purple-300 text-sm font-semibold">{entry.tool}</span>
-                {toolDesc && (
-                  <p className="text-gray-400 text-xs mt-0.5">{toolDesc.description}</p>
-                )}
               </div>
             )}
             {entry.model && (
@@ -675,163 +754,25 @@
             )}
           </div>
 
-          {/* Scrollable detail body */}
-          <div className="flex-1 overflow-y-auto scrollbar-thin p-4">
-            {/* Tool events */}
-            {(entry.type === 'tool_start') && (
-              <>
-                <DetailField label="Input" value={parseJSON(entry.input_summary)} />
-                {toolDesc?.input && <DetailField label="Input schema" value={toolDesc.input} />}
-              </>
-            )}
-
-            {(entry.type === 'tool_complete') && (
-              <>
-                {entry.ok && <DetailField label="Result" value={parseJSON(entry.result_summary)} color="text-green-300" />}
-                {entry.error && <DetailField label="Error" value={entry.error} color="text-red-300" />}
-                {entry.duration_ms != null && (
-                  <div className="text-xs text-gray-500 mb-3">Duration: {entry.duration_ms}ms</div>
-                )}
-              </>
-            )}
-
-            {/* LLM call events */}
-            {entry.type === 'llm_call' && (
-              <>
-                <div className="grid grid-cols-2 gap-2 mb-3 text-xs">
-                  <div className="bg-bg rounded p-2">
-                    <span className="text-gray-500">Tokens in:</span>{' '}
-                    <span className="text-blue-300">{entry.in_tokens?.toLocaleString()}</span>
-                  </div>
-                  <div className="bg-bg rounded p-2">
-                    <span className="text-gray-500">Tokens out:</span>{' '}
-                    <span className="text-green-300">{entry.out_tokens?.toLocaleString()}</span>
-                  </div>
-                  <div className="bg-bg rounded p-2">
-                    <span className="text-gray-500">Cost:</span>{' '}
-                    <span className="text-amber-300">${entry.cost?.toFixed(4)}</span>
-                  </div>
-                  <div className="bg-bg rounded p-2">
-                    <span className="text-gray-500">Duration:</span>{' '}
-                    <span className="text-gray-300">{entry.duration_ms}ms</span>
-                  </div>
-                </div>
-                {Array.isArray(entry.tools_available) && entry.tools_available.length > 0 && (
-                  <div className="mb-3">
-                    <div className="text-xs text-gray-500 mb-1">Tools available</div>
-                    <div className="flex flex-wrap gap-1">
-                      {entry.tools_available.map((t, ti) => (
-                        <span key={ti} title={t.description || ''} className="text-[10px] bg-bg text-purple-300 rounded px-1.5 py-0.5 cursor-default hover:bg-purple-900/30">{t.name}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {entry.response && <DetailField label="Response" value={entry.response} />}
-                {Array.isArray(entry.tool_calls) && entry.tool_calls.length > 0 && (
-                  <div className="mb-3">
-                    <div className="text-xs text-purple-400 font-semibold mb-1">tool_calls ({entry.tool_calls.length})</div>
-                    {entry.tool_calls.map((tc, ti) => {
-                      const fn = tc.function || {};
-                      let args = fn.arguments || '';
-                      if (typeof args === 'string') { try { args = JSON.parse(args); } catch {} }
-                      return (
-                        <div key={ti} className="bg-bg rounded p-2 text-xs mb-1">
-                          <span className="text-purple-300 font-semibold">{fn.name || tc.name || '?'}</span>
-                          {args && typeof args === 'object' ? (
-                            <div className="mt-1"><JsonView data={args} /></div>
-                          ) : args ? (
-                            <pre className="text-gray-300 mt-1 whitespace-pre-wrap">{String(args)}</pre>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {Array.isArray(entry.request) && entry.request.map((msg, mi) => {
-                  const roleColors = { system: 'text-amber-400', user: 'text-blue-400', assistant: 'text-green-400' };
-                  const roleColor = roleColors[msg.role] || 'text-gray-400';
-                  return (
-                    <div key={mi} className="mb-3">
-                      <div className={`${roleColor} text-xs font-semibold mb-1`}>{msg.role}</div>
-                      <div className="bg-bg rounded p-2 text-xs">
-                        <ExpandableText text={msg.content || ''} />
-                      </div>
-                    </div>
-                  );
-                })}
-                {entry.step && (
-                  <div className="text-xs text-gray-500 mb-3">Step: {entry.step}</div>
-                )}
-              </>
-            )}
-
-            {/* Session events */}
-            {entry.type === 'session_start' && (
-              <>
-                <DetailField label="Session ID" value={entry.session_id} />
-                <DetailField label="Effort" value={entry.effort} />
-                {entry.crash_detected && <DetailField label="Crash detected" value="true" color="text-red-300" />}
-              </>
-            )}
-
-            {entry.type === 'session_end' && (
-              <>
-                {entry.outcome && <DetailField label="Outcome" value={entry.outcome} />}
-                {entry.cost && <DetailField label="Total cost" value={`$${entry.cost.toFixed(4)}`} />}
-                {entry.steps && <DetailField label="Steps" value={entry.steps} />}
-              </>
-            )}
-
-            {/* KV operations requested */}
-            {(entry.type === 'kv_operations_requested' || entry.event === 'kv_operations_requested') && (
-              <>
-                <DetailField label="Step" value={entry.step} />
-                <div className="mb-3">
-                  <div className="text-gray-500 text-xs mb-1">Operations ({entry.operations?.length || 0})</div>
-                  {(entry.operations || []).map((op, idx) => (
-                    <div key={idx} className="bg-bg rounded p-2 text-xs mb-1">
-                      <span className="text-yellow-400 font-semibold">{op.op}</span>
-                      <span className="text-cyan-300 ml-2">{op.key}</span>
-                      {op.value_preview && (
-                        <div className="mt-1 text-gray-400 truncate">{op.value_preview}</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {/* Mutation events */}
-            {entry.type === 'mutation_blocked' && (
-              <>
-                <DetailField label="Key" value={entry.key} color="text-yellow-300" />
-                <DetailField label="Operation" value={entry.op || 'put'} />
-                <DetailField label="Reason" value={
-                  entry.reason === 'protected_key'
-                    ? 'Key exists but lacks { unprotected: true } metadata. Use mutation_requests via reflect to modify protected keys.'
-                    : entry.reason === 'system_key'
-                    ? 'System key (config:*, prompt:*, provider:*, tool:*) — cannot be written directly.'
-                    : entry.reason
-                } color="text-red-300" />
-                {entry.attempted_value && (
-                  <DetailField label="Attempted value" value={entry.attempted_value} color="text-gray-400" />
-                )}
-              </>
-            )}
-
-            {/* Raw data toggle */}
-            <button
-              onClick={() => setShowRaw(!showRaw)}
-              className="text-xs text-gray-600 hover:text-gray-400 transition mt-2 mb-1"
-            >
-              {showRaw ? '▾ Hide raw data' : '▸ Show raw data'}
-            </button>
-            {showRaw && (
-              <div className="bg-bg rounded p-2 text-xs max-h-64 overflow-y-auto scrollbar-thin fade-in">
-                <JsonView data={entry} />
-              </div>
-            )}
+          {/* Collapsible JSON tree */}
+          <div className="flex-1 overflow-y-auto scrollbar-thin p-4 text-xs font-mono">
+            <JsonTree data={entry} defaultOpen={true} />
           </div>
+        </div>
+      );
+    }
+
+    // ── Shared error/retry component ─────────────────────────
+    function LoadError({ error, onRetry }) {
+      const msg = error === 'TIMEOUT' ? 'Request timed out' : 'Failed to load data';
+      return (
+        <div className="flex items-center gap-3 text-sm">
+          <span className="text-red-400">{msg}</span>
+          {onRetry && (
+            <button onClick={onRetry} className="text-accent hover:text-amber-300 underline text-xs">
+              Retry
+            </button>
+          )}
         </div>
       );
     }
@@ -840,15 +781,19 @@
     function KVExplorerTab({ operatorKey }) {
       const [index, setIndex] = useState([]);
       const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
       const [expandedKey, setExpandedKey] = useState(null);
       const [keyValue, setKeyValue] = useState(null);
       const [keyLoading, setKeyLoading] = useState(false);
 
-      useEffect(() => {
+      const loadIndex = useCallback(() => {
+        setLoading(true); setError(null);
         api('/kv', operatorKey)
           .then(d => { setIndex(d.keys || []); setLoading(false); })
-          .catch(() => setLoading(false));
+          .catch(e => { setError(e.message); setLoading(false); });
       }, [operatorKey]);
+
+      useEffect(() => { loadIndex(); }, [loadIndex]);
 
       // Group by prefix
       const grouped = useMemo(() => {
@@ -887,7 +832,11 @@
       return (
         <div className="h-full overflow-y-auto scrollbar-thin">
           {loading && <p className="text-gray-500 text-sm">Loading index...</p>}
-          <div className="text-xs text-gray-500 mb-3">{index.length} keys total</div>
+          {error && <LoadError error={error} onRetry={loadIndex} />}
+          <div className="flex items-center gap-3 mb-3">
+            <span className="text-xs text-gray-500">{index.length} keys total</span>
+            <button onClick={loadIndex} className="text-gray-600 hover:text-gray-400 text-xs">refresh</button>
+          </div>
           {grouped.map(([prefix, entries]) => (
             <div key={prefix} className="mb-2">
               <button
@@ -939,9 +888,10 @@
       const [reflectKeys, setReflectKeys] = useState([]);
       const [selectedReflect, setSelectedReflect] = useState(null);
       const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
 
-      useEffect(() => {
-        // Load latest reflect + index for reflect:* keys
+      const loadReflections = useCallback(() => {
+        setLoading(true); setError(null);
         Promise.all([
           api('/kv/last_reflect', operatorKey),
           api('/kv?prefix=reflect:', operatorKey),
@@ -949,8 +899,10 @@
           setReflect(lr.value);
           setReflectKeys((idx.keys || []).map(k => k.key));
           setLoading(false);
-        }).catch(() => setLoading(false));
+        }).catch(e => { setError(e.message); setLoading(false); });
       }, [operatorKey]);
+
+      useEffect(() => { loadReflections(); }, [loadReflections]);
 
       const loadReflect = async (key) => {
         setSelectedReflect(null);
@@ -961,6 +913,7 @@
       };
 
       if (loading) return <p className="text-gray-500 text-sm">Loading reflections...</p>;
+      if (error) return <LoadError error={error} onRetry={loadReflections} />;
 
       const fields = ['summary', 'note_to_future_self', 'mutation_requests', 'kv_operations', 'next_wake_config'];
 
@@ -1033,11 +986,13 @@
       const [staged, setStaged] = useState([]);
       const [candidates, setCandidates] = useState([]);
       const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
       const [expandedId, setExpandedId] = useState(null);
       const [detail, setDetail] = useState(null);
       const [filter, setFilter] = useState('all');
 
-      useEffect(() => {
+      const loadMutations = useCallback(() => {
+        setLoading(true); setError(null);
         Promise.all([
           api('/kv?prefix=mutation_staged:', operatorKey),
           api('/kv?prefix=mutation_candidate:', operatorKey),
@@ -1045,8 +1000,10 @@
           setStaged((s.keys || []).map(k => ({ ...k, status: 'staged' })));
           setCandidates((c.keys || []).map(k => ({ ...k, status: 'candidate' })));
           setLoading(false);
-        }).catch(() => setLoading(false));
+        }).catch(e => { setError(e.message); setLoading(false); });
       }, [operatorKey]);
+
+      useEffect(() => { loadMutations(); }, [loadMutations]);
 
       const all = useMemo(() => {
         return [...staged, ...candidates].sort((a, b) => {
@@ -1074,6 +1031,7 @@
       };
 
       if (loading) return <p className="text-gray-500 text-sm">Loading mutations...</p>;
+      if (error) return <LoadError error={error} onRetry={loadMutations} />;
 
       return (
         <div className="h-full overflow-y-auto scrollbar-thin">
@@ -1156,16 +1114,18 @@
     function App() {
       const [operatorKey, setOperatorKey] = useState(() => sessionStorage.getItem('operatorKey'));
       const [health, setHealth] = useState(null);
-      const [balance, setBalance] = useState(null);
+      const [balances, setBalances] = useState(null);
+      const [countdown, setCountdown] = useState(null);
+      const [waking, setWaking] = useState(false);
       const [activeTab, setActiveTab] = useState('timeline');
       const [selectedEntry, setSelectedEntry] = useState(null);
-      const [rightPanelWidth, setRightPanelWidth] = useState(384); // 24rem = w-96
+      const [leftPct, setLeftPct] = useState(50); // percentage for left panel
       const containerRef = useRef(null);
       const handleDividerDrag = useCallback((clientX) => {
         if (!containerRef.current) return;
         const rect = containerRef.current.getBoundingClientRect();
-        const newWidth = Math.max(250, Math.min(rect.width - 300, rect.right - clientX));
-        setRightPanelWidth(newWidth);
+        const pct = Math.max(20, Math.min(80, ((clientX - rect.left) / rect.width) * 100));
+        setLeftPct(pct);
       }, []);
 
       const handleLogin = (key) => {
@@ -1177,49 +1137,60 @@
         sessionStorage.removeItem('operatorKey');
         setOperatorKey(null);
         setHealth(null);
-        setBalance(null);
+        setBalances(null);
       };
 
-      // Load health + balance on auth
-      useEffect(() => {
+      // Load health + balances on auth, poll every 10s
+      const loadHealth = useCallback(async () => {
         if (!operatorKey) return;
-        api('/health', operatorKey)
-          .then(h => {
-            setHealth(h);
-            // Extract balance from last reflect if available
-            const lr = h.lastReflect;
-            if (lr?.next_orient_context?.or_balance != null) {
-              setBalance(lr.next_orient_context.or_balance);
-            }
-            // Also try to find balance in latest session karma
-            if (h.sessionCounter > 0) {
-              api('/kv/cache:session_ids', operatorKey).then(d => {
-                const ids = d.value || [];
-                if (!ids.length) return;
-                const latest = ids[ids.length - 1];
-                api(`/kv/karma:${latest}`, operatorKey).then(k => {
-                  const entries = k.value || [];
-                  // Find last check_or_balance result
-                  for (let i = entries.length - 1; i >= 0; i--) {
-                    const e = entries[i];
-                    if (e.event === 'tool_complete' && e.tool === 'check_or_balance' && e.ok) {
-                      try {
-                        const result = typeof e.result_summary === 'string'
-                          ? JSON.parse(e.result_summary) : e.result_summary;
-                        const remaining = result?.data?.limit_remaining;
-                        if (remaining != null) setBalance(remaining);
-                      } catch {}
-                      break;
-                    }
-                  }
-                }).catch(() => {});
-              }).catch(() => {});
-            }
-          })
-          .catch(err => {
-            if (err.message === 'UNAUTHORIZED') handleLogout();
-          });
+        try {
+          const h = await api('/health', operatorKey);
+          setHealth(h);
+          const tryLoadBalances = async (sid) => {
+            if (!sid) return false;
+            try {
+              const k = await api(`/kv/karma:${sid}`, operatorKey);
+              const entries = k.value || [];
+              const start = entries.find(e => e.event === 'session_start' && e.balances);
+              if (start?.balances) { setBalances(start.balances); return true; }
+            } catch {}
+            return false;
+          };
+          if (!(await tryLoadBalances(h.session))) {
+            try {
+              const d = await api('/kv/cache:session_ids', operatorKey);
+              const ids = d.value || [];
+              if (ids.length) await tryLoadBalances(ids[ids.length - 1]);
+            } catch {}
+          }
+        } catch (err) {
+          if (err.message === 'UNAUTHORIZED') handleLogout();
+        }
       }, [operatorKey]);
+
+      useEffect(() => {
+        loadHealth();
+        const iv = setInterval(loadHealth, 10000);
+        return () => clearInterval(iv);
+      }, [loadHealth]);
+
+      // Countdown timer for next wake
+      useEffect(() => {
+        const wakeAfter = health?.wakeConfig?.next_wake_after;
+        if (!wakeAfter) return;
+        const target = new Date(wakeAfter).getTime();
+        const tick = () => {
+          const diff = target - Date.now();
+          if (diff <= 0) { setCountdown('now'); return; }
+          const h = Math.floor(diff / 3600000);
+          const m = Math.floor((diff % 3600000) / 60000);
+          const s = Math.floor((diff % 60000) / 1000);
+          setCountdown(`${h}h ${m}m ${s}s`);
+        };
+        tick();
+        const iv = setInterval(tick, 1000);
+        return () => clearInterval(iv);
+      }, [health?.wakeConfig?.next_wake_after]);
 
       if (!operatorKey) return <LoginScreen onLogin={handleLogin} />;
 
@@ -1241,24 +1212,57 @@
                 <span className="text-gray-600">|</span>
                 <span className="text-gray-500">Sessions:</span>
                 <span className="text-accent font-semibold">{health.sessionCounter || 0}</span>
-                {health.session && (
+                {countdown && (
                   <>
-                    <span className="text-gray-500">Active:</span>
-                    <span className="text-green-400">{health.session}</span>
+                    <span className="text-gray-600">|</span>
+                    <span className="text-gray-500">Next wake:</span>
+                    <span className={`font-semibold ${countdown === 'now' ? 'text-green-400' : 'text-blue-400'}`}>
+                      {countdown}
+                    </span>
                   </>
                 )}
+                <button
+                  onClick={async () => {
+                    if (waking) return;
+                    setWaking(true);
+                    try {
+                      await fetch('/wake', { method: 'POST' });
+                      // Refresh health to update countdown
+                      const h = await api('/health', operatorKey);
+                      setHealth(h);
+                    } catch {}
+                    setWaking(false);
+                  }}
+                  disabled={waking}
+                  className={`ml-1 px-2 py-0.5 rounded text-xs font-semibold transition ${
+                    waking
+                      ? 'bg-gray-700 text-gray-500 cursor-wait'
+                      : 'bg-accent/20 text-accent hover:bg-accent/30 cursor-pointer'
+                  }`}
+                >{waking ? 'Waking...' : 'Wake Now'}</button>
               </>
             )}
             <div className="flex items-center gap-2 ml-auto">
-              {health && (
-                <>
-                  <span className="text-gray-500">Balance:</span>
-                  <span className={`font-semibold ${balance == null ? 'text-gray-500' : balance > 5 ? 'text-green-400' : balance > 1 ? 'text-yellow-400' : 'text-red-400'}`}>
-                    {balance != null ? `$${balance.toFixed(2)}` : '—'}
-                  </span>
-                  <span className="text-gray-700 mx-1">|</span>
-                </>
-              )}
+              {health && balances && (() => {
+                const items = [
+                  ...Object.entries(balances.providers || {}).map(([n, v]) => [n, v?.balance ?? v]),
+                  ...Object.entries(balances.wallets || {}).map(([n, v]) => [n, v?.balance ?? v]),
+                ].filter(([, v]) => v != null);
+                if (!items.length) return null;
+                return (
+                  <>
+                    {items.map(([name, val]) => (
+                      <React.Fragment key={name}>
+                        <span className="text-gray-500">{name}:</span>
+                        <span className={`font-semibold ${val > 5 ? 'text-green-400' : val > 1 ? 'text-yellow-400' : 'text-red-400'}`}>
+                          ${typeof val === 'number' ? val.toFixed(2) : val}
+                        </span>
+                      </React.Fragment>
+                    ))}
+                    <span className="text-gray-700 mx-1">|</span>
+                  </>
+                );
+              })()}
               <button
                 onClick={handleLogout}
                 className="text-gray-600 hover:text-gray-400 transition"
@@ -1287,11 +1291,11 @@
           <div ref={containerRef} className="flex-1 flex overflow-hidden">
             {activeTab === 'timeline' ? (
               <>
-                <div className="flex-1 p-4 overflow-hidden flex flex-col">
+                <div style={{ width: `${leftPct}%` }} className="flex-shrink-0 p-4 overflow-hidden flex flex-col">
                   <TimelineTab operatorKey={operatorKey} onSelectEntry={setSelectedEntry} />
                 </div>
                 <DraggableDivider onDrag={handleDividerDrag} />
-                <div style={{ width: rightPanelWidth }} className="flex-shrink-0 overflow-hidden bg-bg-panel flex flex-col">
+                <div style={{ width: `${100 - leftPct}%` }} className="flex-shrink-0 overflow-hidden bg-bg-panel flex flex-col">
                   <ContextPanel operatorKey={operatorKey} selectedEntry={selectedEntry} />
                 </div>
               </>
