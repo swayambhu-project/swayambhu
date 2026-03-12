@@ -19,13 +19,12 @@ export async function wake(K, input) {
   // Load hook-local state eagerly
   let defaults = await K.getDefaults();
   let modelsConfig = await K.getModelsConfig();
-  let dharma = await K.getDharma();
   let toolRegistry = await K.getToolRegistry();
   const sessionId = await K.getSessionId();
 
   // Build shared state object passed to sub-functions
   const state = {
-    defaults, modelsConfig, dharma, toolRegistry, sessionId,
+    defaults, modelsConfig, toolRegistry, sessionId,
     async refreshDefaults() {
       state.defaults = await K.getDefaults();
       defaults = state.defaults;
@@ -88,8 +87,6 @@ export async function wake(K, input) {
     // 4a. Cache immutable/stable values
     modelsConfig = await K.kvGet("config:models");
     state.modelsConfig = modelsConfig;
-    dharma = await K.kvGet("dharma");
-    state.dharma = dharma;
     toolRegistry = await K.kvGet("config:tool_registry");
     state.toolRegistry = toolRegistry;
 
@@ -162,13 +159,12 @@ export async function detectCrash(K) {
 // ── Normal session ──────────────────────────────────────────
 
 export async function runSession(K, state, context, config) {
-  const { defaults, dharma, modelsConfig } = state;
+  const { defaults, modelsConfig } = state;
 
   const orientPrompt = await K.kvGet("prompt:orient");
   const resources = await K.kvGet("config:resources");
 
   const systemPrompt = await K.buildPrompt(orientPrompt, {
-    dharma,
     models: modelsConfig,
     resources,
     config,

@@ -4,7 +4,7 @@ import { resolve } from "path";
 
 // ── Tool modules ─────────────────────────────────────────────
 
-import * as send_telegram from "../tools/send_telegram.js";
+import * as send_slack from "../tools/send_slack.js";
 import * as web_fetch from "../tools/web_fetch.js";
 import * as kv_read from "../tools/kv_read.js";
 import * as kv_write from "../tools/kv_write.js";
@@ -49,7 +49,7 @@ function mockKV(initial = {}) {
 // ── 1. Module structure ──────────────────────────────────────
 
 const allTools = {
-  send_telegram, web_fetch, kv_read, kv_write,
+  send_slack, web_fetch, kv_read, kv_write,
   kv_manifest, karma_query,
 };
 
@@ -97,18 +97,20 @@ describe("wrapAsModule compatibility", () => {
 
 // ── 3. Tool execute() tests ──────────────────────────────────
 
-describe("send_telegram", () => {
-  it("calls Telegram API and returns response", async () => {
-    const f = mockFetch({ ok: true, result: { message_id: 1 } });
-    const result = await send_telegram.execute({
+describe("send_slack", () => {
+  it("calls Slack API and returns response", async () => {
+    const f = mockFetch({ ok: true, channel: "C123", ts: "123.456" });
+    const result = await send_slack.execute({
       text: "hello",
-      secrets: { TELEGRAM_BOT_TOKEN: "tok", TELEGRAM_CHAT_ID: "123" },
+      secrets: { SLACK_BOT_TOKEN: "xoxb-tok", SLACK_CHANNEL_ID: "C123" },
       fetch: f,
     });
     expect(f).toHaveBeenCalledOnce();
-    expect(result).toEqual({ ok: true, result: { message_id: 1 } });
+    expect(result).toEqual({ ok: true, channel: "C123", ts: "123.456" });
     const url = f.mock.calls[0][0];
-    expect(url).toContain("bot" + "tok");
+    expect(url).toBe("https://slack.com/api/chat.postMessage");
+    const opts = f.mock.calls[0][1];
+    expect(opts.headers.Authorization).toBe("Bearer xoxb-tok");
   });
 });
 

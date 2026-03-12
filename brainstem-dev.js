@@ -9,13 +9,13 @@ import { wake } from './wake-hook.js';
 import { handleChat } from './hook-chat.js';
 
 // ── Channel adapters (single source of truth: channels/*.js) ──
-import * as telegramAdapter from './channels/telegram.js';
+import * as slackAdapter from './channels/slack.js';
 
-const CHANNEL_ADAPTERS = { telegram: telegramAdapter };
+const CHANNEL_ADAPTERS = { slack: slackAdapter };
 
 // ── Tool modules (single source of truth: tools/*.js) ──────────
 
-import * as send_telegram from './tools/send_telegram.js';
+import * as send_slack from './tools/send_slack.js';
 import * as web_fetch from './tools/web_fetch.js';
 import * as kv_read from './tools/kv_read.js';
 import * as kv_write from './tools/kv_write.js';
@@ -23,7 +23,7 @@ import * as kv_manifest from './tools/kv_manifest.js';
 import * as karma_query from './tools/karma_query.js';
 
 const TOOL_MODULES = {
-  send_telegram, web_fetch, kv_read, kv_write,
+  send_slack, web_fetch, kv_read, kv_write,
   kv_manifest, karma_query,
 };
 
@@ -64,6 +64,11 @@ export default {
     // Skip verification in dev mode
     const inbound = adapterMod.parseInbound(body);
     if (!inbound) return new Response("OK", { status: 200 });
+    // Channel-agnostic challenge response (e.g. Slack URL verification)
+    if (inbound._challenge) {
+      return new Response(JSON.stringify({ challenge: inbound._challenge }),
+        { headers: { "Content-Type": "application/json" } });
+    }
 
     // Load config eagerly (same as _invokeHookModules)
     brain.defaults = await brain.kvGet("config:defaults");
@@ -74,7 +79,7 @@ export default {
     const adapter = {
       sendReply: async (chatId, text) => {
         await adapterMod.sendReply(chatId, text, {
-          TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,
+          SLACK_BOT_TOKEN: env.SLACK_BOT_TOKEN,
         }, fetch);
       },
     };

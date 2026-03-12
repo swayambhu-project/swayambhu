@@ -12,7 +12,7 @@ import {
 // ── Session reflect ─────────────────────────────────────────
 
 export async function executeReflect(K, state, step) {
-  const { defaults, dharma } = state;
+  const { defaults } = state;
   const sessionId = await K.getSessionId();
 
   const reflectPrompt = await K.kvGet("prompt:reflect");
@@ -25,7 +25,7 @@ export async function executeReflect(K, state, step) {
 
   const systemPrompt = await K.buildPrompt(
     reflectPrompt || defaultReflectPrompt(),
-    { dharma, systemKeyPatterns }
+    { systemKeyPatterns }
   );
 
   const rawKarma = await K.getKarma();
@@ -120,7 +120,7 @@ export async function executeReflect(K, state, step) {
 // ── Deep reflection (recursive, depth-aware) ────────────────
 
 export async function runReflect(K, state, depth, context) {
-  const { dharma, defaults } = state;
+  const { defaults } = state;
   const sessionId = await K.getSessionId();
 
   const prompt = await loadReflectPrompt(K, state, depth);
@@ -128,7 +128,6 @@ export async function runReflect(K, state, depth, context) {
   const belowPrompt = await loadBelowPrompt(K, depth);
 
   const systemPrompt = await K.buildPrompt(prompt, {
-    dharma,
     depth,
     belowPrompt,
     ...initialCtx.templateVars,
@@ -372,8 +371,6 @@ export async function highestReflectDepthDue(K, state) {
 export function defaultReflectPrompt() {
   return `You are reflecting on a session that just completed.
 
-Your dharma: {{dharma}}
-
 Review the session karma log and cost provided in the user message.
 
 Produce a JSON object with: session_summary, note_to_future_self,
@@ -384,8 +381,6 @@ next_wake_config, kv_operations, mutation_verdicts, and mutation_requests.`;
 export function defaultDeepReflectPrompt(depth) {
   if (depth === 1) {
     return `You are performing a depth-1 reflection. This is a deep examination of your recent operations.
-
-Your dharma: {{dharma}}
 
 You have tools available for investigation \u2014 use kv_read, web_fetch, etc. to gather data before drawing conclusions.
 
@@ -407,8 +402,6 @@ Required: reflection, note_to_future_self. Everything else optional.`;
   }
 
   return `You are performing a depth-${depth} reflection. You examine the outputs of depth-${depth - 1} reflections.
-
-Your dharma: {{dharma}}
 
 You have tools available for investigation \u2014 use kv_read, web_fetch, etc. to gather data.
 

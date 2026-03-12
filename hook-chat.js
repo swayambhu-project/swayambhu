@@ -42,9 +42,8 @@ export async function handleChat(K, channel, inbound, adapter) {
     return { ok: true, reason: "budget_exhausted" };
   }
 
-  // Build system prompt (stable prefix for caching, volatile suffix)
-  const [dharma, wisdom, chatPrompt] = await Promise.all([
-    K.getDharma(),
+  // Build system prompt (dharma injected by kernel in callLLM)
+  const [wisdom, chatPrompt] = await Promise.all([
     K.kvGet("wisdom"),
     K.kvGet("prompt:chat"),
   ]);
@@ -52,11 +51,10 @@ export async function handleChat(K, channel, inbound, adapter) {
     ? `\n\nPerson profile:\n${JSON.stringify(person)}`
     : "";
   const systemPrompt = [
-    dharma || "",
-    wisdom ? `\n\nWisdom:\n${wisdom}` : "",
-    chatPrompt || "\n\nYou are in a live chat. Respond conversationally.",
+    wisdom ? `Wisdom:\n${wisdom}` : "",
+    chatPrompt || "You are in a live chat. Respond conversationally.",
     personContext,
-  ].join("");
+  ].join("\n\n").trim();
 
   // Append user message
   conv.messages.push({ role: "user", content: text });

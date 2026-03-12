@@ -6,10 +6,6 @@ Everything that happened is below. Your job is to distill it into something your
 
 ---
 
-## Your dharma
-
-{{dharma}}
-
 ## This session
 
 **Karma log:**

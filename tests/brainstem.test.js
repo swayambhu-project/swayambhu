@@ -203,11 +203,12 @@ describe("callLLM", () => {
       step: "test",
     });
     const call = brain.callWithCascade.mock.calls[0][0];
-    expect(call.messages[0]).toEqual({ role: "system", content: "You are helpful" });
+    expect(call.messages[0].role).toBe("system");
+    expect(call.messages[0].content).toContain("You are helpful");
     expect(call.messages[1]).toEqual({ role: "user", content: "hello" });
   });
 
-  it("does not prepend system message when no systemPrompt", async () => {
+  it("does not prepend system message when no systemPrompt and no dharma", async () => {
     const { brain } = makeLLMBrain();
     await brain.callLLM({
       model: "test-model",
@@ -217,6 +218,36 @@ describe("callLLM", () => {
     const call = brain.callWithCascade.mock.calls[0][0];
     expect(call.messages.length).toBe(1);
     expect(call.messages[0].role).toBe("user");
+  });
+
+  it("injects dharma into system prompt when dharma is set", async () => {
+    const { brain } = makeLLMBrain();
+    brain.dharma = "Be truthful and compassionate.";
+    await brain.callLLM({
+      model: "test-model",
+      messages: [{ role: "user", content: "hello" }],
+      systemPrompt: "You are helpful",
+      step: "test",
+    });
+    const call = brain.callWithCascade.mock.calls[0][0];
+    expect(call.messages[0].role).toBe("system");
+    expect(call.messages[0].content).toContain("[DHARMA]");
+    expect(call.messages[0].content).toContain("Be truthful and compassionate.");
+    expect(call.messages[0].content).toContain("You are helpful");
+  });
+
+  it("injects dharma even when no systemPrompt provided", async () => {
+    const { brain } = makeLLMBrain();
+    brain.dharma = "Be truthful.";
+    await brain.callLLM({
+      model: "test-model",
+      messages: [{ role: "user", content: "hello" }],
+      step: "test",
+    });
+    const call = brain.callWithCascade.mock.calls[0][0];
+    expect(call.messages[0].role).toBe("system");
+    expect(call.messages[0].content).toContain("[DHARMA]");
+    expect(call.messages[0].content).toContain("Be truthful.");
   });
 
   it("passes tools in request", async () => {

@@ -164,6 +164,11 @@ export default {
     if (!parsed?.inbound) {
       return new Response("OK", { status: 200 });
     }
+    // Channel-agnostic challenge response (e.g. Slack URL verification)
+    if (parsed.inbound._challenge) {
+      return new Response(JSON.stringify({ challenge: parsed.inbound._challenge }),
+        { headers: { "Content-Type": "application/json" } });
+    }
 
     // Load config eagerly for chat handler
     brain.defaults = await brain.kvGet("config:defaults");
@@ -560,7 +565,7 @@ class Brainstem {
     await this.sendKernelAlert("hook_reset",
       "Hook execution failed. Running minimal recovery mode.");
 
-    const hardcodedPrompt = `You are Swayambhu in recovery mode. Your wake hook has been reset due to repeated failures. Check your balances and report your status via send_telegram. Do not attempt complex operations.`;
+    const hardcodedPrompt = `You are Swayambhu in recovery mode. Your wake hook has been reset due to repeated failures. Check your balances and report your status. Do not attempt complex operations.`;
 
     this.defaults = { session_budget: { max_cost: 0.50, max_steps: 3, max_duration_seconds: 120 } };
     this.modelsConfig = this.modelsConfig || await this.kvGet("config:models");
@@ -868,9 +873,15 @@ export default {
 
     const startMs = Date.now();
 
+    // Kernel-enforced dharma injection — no hook or prompt mutation can bypass this
+    const dharmaPrefix = this.dharma ? `[DHARMA]\n${this.dharma}\n[/DHARMA]\n\n` : '';
+    const fullSystemPrompt = systemPrompt
+      ? dharmaPrefix + systemPrompt
+      : dharmaPrefix || null;
+
     // Build messages array, prepending system prompt if provided
-    const msgs = systemPrompt
-      ? [{ role: "system", content: systemPrompt }, ...messages]
+    const msgs = fullSystemPrompt
+      ? [{ role: "system", content: fullSystemPrompt }, ...messages]
       : [...messages];
 
     // Standardized request — provider adapter translates this

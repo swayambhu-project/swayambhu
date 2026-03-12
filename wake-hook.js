@@ -50,13 +50,12 @@ export async function wake(K, input) {
   // Load hook-local state eagerly
   let defaults = await K.getDefaults();
   let modelsConfig = await K.getModelsConfig();
-  let dharma = await K.getDharma();
   let toolRegistry = await K.getToolRegistry();
   const sessionId = await K.getSessionId();
 
   // Build shared state object passed to sub-functions
   const state = {
-    defaults, modelsConfig, dharma, toolRegistry, sessionId,
+    defaults, modelsConfig, toolRegistry, sessionId,
     async refreshDefaults() {
       state.defaults = await K.getDefaults();
       defaults = state.defaults;
@@ -117,8 +116,6 @@ export async function wake(K, input) {
     // 4a. Cache immutable/stable values
     modelsConfig = await K.kvGet("config:models");
     state.modelsConfig = modelsConfig;
-    dharma = await K.kvGet("dharma");
-    state.dharma = dharma;
     toolRegistry = await K.kvGet("config:tool_registry");
     state.toolRegistry = toolRegistry;
 
@@ -191,13 +188,12 @@ export async function detectCrash(K) {
 // ── Normal session ──────────────────────────────────────────
 
 export async function runSession(K, state, context, config) {
-  const { defaults, dharma, modelsConfig } = state;
+  const { defaults, modelsConfig } = state;
 
   const orientPrompt = await K.kvGet("prompt:orient");
   const resources = await K.kvGet("config:resources");
 
   const systemPrompt = await K.buildPrompt(orientPrompt, {
-    dharma,
     models: modelsConfig,
     resources,
     config,
@@ -263,7 +259,7 @@ export function buildOrientContext(context) {
 // ── Reflect ─────────────────────────────────────────────────
 
 export async function executeReflect(K, state, step) {
-  const { defaults, dharma } = state;
+  const { defaults } = state;
   const sessionId = await K.getSessionId();
 
   const reflectPrompt = await K.kvGet("prompt:reflect");
@@ -276,7 +272,7 @@ export async function executeReflect(K, state, step) {
 
   const systemPrompt = await K.buildPrompt(
     reflectPrompt || defaultReflectPrompt(),
-    { dharma, systemKeyPatterns }
+    { systemKeyPatterns }
   );
 
   const rawKarma = await K.getKarma();
@@ -371,7 +367,7 @@ export async function executeReflect(K, state, step) {
 // ── Deep reflection (recursive, depth-aware) ────────────────
 
 export async function runReflect(K, state, depth, context) {
-  const { dharma, defaults } = state;
+  const { defaults } = state;
   const sessionId = await K.getSessionId();
 
   const prompt = await loadReflectPrompt(K, state, depth);
@@ -379,7 +375,6 @@ export async function runReflect(K, state, depth, context) {
   const belowPrompt = await loadBelowPrompt(K, depth);
 
   const systemPrompt = await K.buildPrompt(prompt, {
-    dharma,
     depth,
     belowPrompt,
     ...initialCtx.templateVars,
@@ -1073,8 +1068,6 @@ export function evaluateTripwires(config, liveData) {
 export function defaultReflectPrompt() {
   return `You are reflecting on a session that just completed.
 
-Your dharma: {{dharma}}
-
 Review the session karma log and cost provided in the user message.
 
 Produce a JSON object with: session_summary, note_to_future_self,
@@ -1085,8 +1078,6 @@ next_wake_config, kv_operations, mutation_verdicts, and mutation_requests.`;
 export function defaultDeepReflectPrompt(depth) {
   if (depth === 1) {
     return `You are performing a depth-1 reflection. This is a deep examination of your recent operations.
-
-Your dharma: {{dharma}}
 
 You have tools available for investigation — use kv_read, web_fetch, etc. to gather data before drawing conclusions.
 
@@ -1108,8 +1099,6 @@ Required: reflection, note_to_future_self. Everything else optional.`;
   }
 
   return `You are performing a depth-${depth} reflection. You examine the outputs of depth-${depth - 1} reflections.
-
-Your dharma: {{dharma}}
 
 You have tools available for investigation — use kv_read, web_fetch, etc. to gather data.
 

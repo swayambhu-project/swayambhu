@@ -53,11 +53,11 @@ await kv.put("hook:wake:manifest", JSON.stringify({
 console.log("patched hook:wake:manifest");
 
 // 3. Update channel adapters
-const channelCode = read("channels/telegram.js");
-await kv.put("channel:telegram:code", channelCode, {
-  metadata: { format: "text", description: "Telegram channel adapter" },
+const channelCode = read("channels/slack.js");
+await kv.put("channel:slack:code", channelCode, {
+  metadata: { format: "text", description: "Slack channel adapter" },
 });
-console.log("patched channel:telegram:code —", channelCode.length, "chars");
+console.log("patched channel:slack:code —", channelCode.length, "chars");
 
 // 4. Update prompt:reflect
 const reflectPrompt = read("prompts/reflect.md");

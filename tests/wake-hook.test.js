@@ -49,7 +49,6 @@ function makeState(overrides = {}) {
   return {
     defaults: overrides.defaults || {},
     modelsConfig: overrides.modelsConfig || null,
-    dharma: overrides.dharma || null,
     toolRegistry: overrides.toolRegistry || null,
     sessionId: overrides.sessionId || "test_session",
     async refreshDefaults() { this.defaults = overrides.defaults || {}; },
@@ -487,15 +486,15 @@ describe("writeSessionResults", () => {
 // ── 12. Default prompts ─────────────────────────────────────
 
 describe("default prompts", () => {
-  it("defaultReflectPrompt includes dharma placeholder", () => {
+  it("defaultReflectPrompt does not include dharma (kernel-injected)", () => {
     const prompt = defaultReflectPrompt();
-    expect(prompt).toContain("{{dharma}}");
+    expect(prompt).not.toContain("{{dharma}}");
   });
 
   it("defaultDeepReflectPrompt depth 1", () => {
     const prompt = defaultDeepReflectPrompt(1);
     expect(prompt).toContain("depth-1 reflection");
-    expect(prompt).toContain("{{dharma}}");
+    expect(prompt).not.toContain("{{dharma}}");
   });
 
   it("defaultDeepReflectPrompt depth 2", () => {

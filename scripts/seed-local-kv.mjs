@@ -99,8 +99,8 @@ await put("config:resources", {
   worker: { max_cron_duration_seconds: 900, max_subrequests_per_invocation: 1000, cpu_time_limit_ms: 10 },
   openrouter: { base_url: "https://openrouter.ai/api/v1", balance_endpoint: "/api/v1/auth/key", topup_endpoint: "/api/v1/credits/coinbase", topup_fee_percent: 5, topup_chain: "base", topup_chain_id: 8453 },
   wallet: { chain: "base", token: "USDC", address: "0x1951e298f9Aa7eFf5eB0dD5349e823BBB09a3260" },
-  telegram: { bot_token_secret: "TELEGRAM_BOT_TOKEN", chat_id_secret: "TELEGRAM_CHAT_ID" },
-}, "json", "Platform limits and external service endpoints (KV, worker, OpenRouter, wallet, Telegram)");
+  slack: { bot_token_secret: "SLACK_BOT_TOKEN", channel_id_secret: "SLACK_CHANNEL_ID" },
+}, "json", "Platform limits and external service endpoints (KV, worker, OpenRouter, wallet, Slack)");
 
 await put("providers", {
   openrouter: { adapter: "provider:llm_balance", scope: "general" },
@@ -114,7 +114,7 @@ await put("wallets", {
 
 await put("config:tool_registry", {
   tools: [
-    { name: "send_telegram", description: "Post a message to the Telegram channel", input: { text: "required", parse_mode: "Markdown | HTML" } },
+    { name: "send_slack", description: "Post a message to the Slack channel", input: { text: "required", channel: "optional — override default channel" } },
     { name: "web_fetch", description: "Fetch contents of a URL", input: { url: "required", method: "GET|POST", headers: "optional", max_length: "default 10000" } },
     { name: "kv_read", description: "Read a value from memory (any key)", input: { key: "required" } },
     { name: "kv_write", description: "Write to tool's own KV namespace", input: { key: "required", value: "required" } },
@@ -141,7 +141,7 @@ for (const name of providerFiles) {
 
 console.log("--- Tools ---");
 const toolNames = [
-  "send_telegram", "web_fetch", "kv_read", "kv_write",
+  "send_slack", "web_fetch", "kv_read", "kv_write",
   "kv_manifest", "karma_query", "akash_exec",
   "check_email", "send_email",
 ];
@@ -182,11 +182,11 @@ await put("hook:wake:manifest", {
 // ── Channel adapters ──────────────────────────────────────────
 
 console.log("--- Channel Adapters ---");
-await put("channel:telegram:code", read("channels/telegram.js"), "text", "Telegram channel adapter");
-await put("channel:telegram:config", {
-  secrets: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"],
-  webhook_secret_env: "TELEGRAM_WEBHOOK_SECRET",
-}, "json", "Telegram channel config");
+await put("channel:slack:code", read("channels/slack.js"), "text", "Slack channel adapter");
+await put("channel:slack:config", {
+  secrets: ["SLACK_BOT_TOKEN"],
+  webhook_secret_env: "SLACK_SIGNING_SECRET",
+}, "json", "Slack channel config");
 
 // ── Chat prompt ───────────────────────────────────────────────
 
@@ -204,10 +204,10 @@ await put("prompt:chat", [
 
 console.log("--- Kernel Config ---");
 await put("kernel:alert_config", {
-  url: "https://api.telegram.org/bot{{TELEGRAM_BOT_TOKEN}}/sendMessage",
-  headers: { "Content-Type": "application/json" },
-  body_template: { chat_id: "{{TELEGRAM_CHAT_ID}}", text: "[Swayambhu] {{event}}: {{message}}", parse_mode: "HTML" },
-}, "json", "Telegram alert template for kernel events");
+  url: "https://slack.com/api/chat.postMessage",
+  headers: { "Content-Type": "application/json", "Authorization": "Bearer {{SLACK_BOT_TOKEN}}" },
+  body_template: { channel: "{{SLACK_CHANNEL_ID}}", text: "[Swayambhu] {{event}}: {{message}}" },
+}, "json", "Slack alert template for kernel events");
 
 await put("kernel:llm_fallback", read("providers/llm.js"), "text", "Fallback LLM provider source code");
 const llmMod = await importLocal("providers/llm.js");

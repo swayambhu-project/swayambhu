@@ -37,7 +37,7 @@ describe("handleChat", () => {
   });
 
   it("sends reply via adapter.sendReply", async () => {
-    const result = await handleChat(K, "telegram", {
+    const result = await handleChat(K, "slack", {
       chatId: "123", text: "Hi", userId: "user1",
     }, adapter);
 
@@ -49,27 +49,27 @@ describe("handleChat", () => {
 
   it("persists conversation state across turns", async () => {
     // Turn 1
-    await handleChat(K, "telegram", {
+    await handleChat(K, "slack", {
       chatId: "123", text: "Hi", userId: "user1",
     }, adapter);
 
     // Verify state was saved
     const savedConv = K.kvPutSafe.mock.calls[0];
-    expect(savedConv[0]).toBe("chat:state:telegram:123");
+    expect(savedConv[0]).toBe("chat:state:slack:123");
     const conv = savedConv[1];
     expect(conv.turn_count).toBe(1);
     expect(conv.messages).toHaveLength(2); // user + assistant
 
     // Turn 2: mock kvGet to return saved state
     K.kvGet.mockImplementation(async (key) => {
-      if (key === "chat:state:telegram:123") return conv;
+      if (key === "chat:state:slack:123") return conv;
       if (key === "wisdom") return null;
       if (key === "prompt:chat") return null;
       if (key.startsWith("person:")) return null;
       return null;
     });
 
-    await handleChat(K, "telegram", {
+    await handleChat(K, "slack", {
       chatId: "123", text: "How are you?", userId: "user1",
     }, adapter);
 
@@ -90,11 +90,11 @@ describe("handleChat", () => {
       created_at: "2026-01-01T00:00:00.000Z",
     };
     K.kvGet.mockImplementation(async (key) => {
-      if (key === "chat:state:telegram:123") return existingConv;
+      if (key === "chat:state:slack:123") return existingConv;
       return null;
     });
 
-    const result = await handleChat(K, "telegram", {
+    const result = await handleChat(K, "slack", {
       chatId: "123", text: "/reset", userId: "user1", command: "reset",
     }, adapter);
 
@@ -111,7 +111,7 @@ describe("handleChat", () => {
 
   it("/clear wipes conversation state entirely", async () => {
     K.kvGet.mockImplementation(async (key) => {
-      if (key === "chat:state:telegram:123") return {
+      if (key === "chat:state:slack:123") return {
         messages: [{ role: "user", content: "old" }],
         total_cost: 0.10,
         turn_count: 5,
@@ -119,19 +119,19 @@ describe("handleChat", () => {
       return null;
     });
 
-    const result = await handleChat(K, "telegram", {
+    const result = await handleChat(K, "slack", {
       chatId: "123", text: "/clear", userId: "user1", command: "clear",
     }, adapter);
 
     expect(result).toEqual({ ok: true, reason: "clear" });
-    expect(K.kvDeleteSafe).toHaveBeenCalledWith("chat:state:telegram:123");
+    expect(K.kvDeleteSafe).toHaveBeenCalledWith("chat:state:slack:123");
     expect(adapter.sendReply).toHaveBeenCalledWith("123", "Conversation cleared.");
     expect(K.callLLM).not.toHaveBeenCalled();
   });
 
   it("budget limit stops conversation", async () => {
     K.kvGet.mockImplementation(async (key) => {
-      if (key === "chat:state:telegram:123") return {
+      if (key === "chat:state:slack:123") return {
         messages: [],
         total_cost: 0.50, // at limit
         turn_count: 10,
@@ -140,7 +140,7 @@ describe("handleChat", () => {
       return null;
     });
 
-    const result = await handleChat(K, "telegram", {
+    const result = await handleChat(K, "slack", {
       chatId: "123", text: "Hello", userId: "user1",
     }, adapter);
 
@@ -162,7 +162,7 @@ describe("handleChat", () => {
 
     K.executeToolCall.mockResolvedValue({ value: "be kind" });
 
-    const result = await handleChat(K, "telegram", {
+    const result = await handleChat(K, "slack", {
       chatId: "123", text: "What's the wisdom?", userId: "user1",
     }, adapter);
 
@@ -192,7 +192,7 @@ describe("handleChat", () => {
 
     // Start with 3 existing messages
     K.kvGet.mockImplementation(async (key) => {
-      if (key === "chat:state:telegram:123") return {
+      if (key === "chat:state:slack:123") return {
         messages: [
           { role: "user", content: "msg1" },
           { role: "assistant", content: "reply1" },
@@ -205,7 +205,7 @@ describe("handleChat", () => {
       return null;
     });
 
-    await handleChat(K, "telegram", {
+    await handleChat(K, "slack", {
       chatId: "123", text: "msg3", userId: "user1",
     }, adapter);
 
@@ -218,20 +218,20 @@ describe("handleChat", () => {
 
   it("multiple conversations (different chatIds) are independent", async () => {
     // Chat 1
-    await handleChat(K, "telegram", {
+    await handleChat(K, "slack", {
       chatId: "aaa", text: "Hi from A", userId: "userA",
     }, adapter);
 
     // Chat 2
-    await handleChat(K, "telegram", {
+    await handleChat(K, "slack", {
       chatId: "bbb", text: "Hi from B", userId: "userB",
     }, adapter);
 
     // Verify different KV keys
     const call1 = K.kvPutSafe.mock.calls[0];
     const call2 = K.kvPutSafe.mock.calls[1];
-    expect(call1[0]).toBe("chat:state:telegram:aaa");
-    expect(call2[0]).toBe("chat:state:telegram:bbb");
+    expect(call1[0]).toBe("chat:state:slack:aaa");
+    expect(call2[0]).toBe("chat:state:slack:bbb");
 
     // Each has independent message history
     expect(call1[1].messages[0].content).toBe("Hi from A");
@@ -239,14 +239,14 @@ describe("handleChat", () => {
   });
 
   it("records karma after each turn", async () => {
-    await handleChat(K, "telegram", {
+    await handleChat(K, "slack", {
       chatId: "123", text: "Hi", userId: "user1",
     }, adapter);
 
     expect(K.karmaRecord).toHaveBeenCalledWith(
       expect.objectContaining({
         event: "chat_turn",
-        channel: "telegram",
+        channel: "slack",
         chat_id: "123",
         turn: 1,
       })
@@ -268,7 +268,7 @@ describe("handleChat", () => {
       orient: { model: "sonnet" },
     });
 
-    await handleChat(K, "telegram", {
+    await handleChat(K, "slack", {
       chatId: "123", text: "Go", userId: "user1",
     }, adapter);
 
@@ -287,7 +287,7 @@ describe("handleChat", () => {
       return null;
     });
 
-    await handleChat(K, "telegram", {
+    await handleChat(K, "slack", {
       chatId: "123", text: "Hi", userId: "user1",
     }, adapter);
 
@@ -308,7 +308,7 @@ describe("handleChat", () => {
       .mockResolvedValueOnce({ content: "Done", cost: 0.02, toolCalls: null, usage: {} });
     K.executeToolCall.mockResolvedValue({ value: "v" });
 
-    await handleChat(K, "telegram", {
+    await handleChat(K, "slack", {
       chatId: "123", text: "Go", userId: "user1",
     }, adapter);
 

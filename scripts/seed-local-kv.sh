@@ -169,9 +169,9 @@ cat > /tmp/_kv_seed_val <<'JSONEOF'
     "token": "USDC",
     "address": "0x1951e298f9Aa7eFf5eB0dD5349e823BBB09a3260"
   },
-  "telegram": {
-    "bot_token_secret": "TELEGRAM_BOT_TOKEN",
-    "chat_id_secret": "TELEGRAM_CHAT_ID"
+  "slack": {
+    "bot_token_secret": "SLACK_BOT_TOKEN",
+    "channel_id_secret": "SLACK_CHANNEL_ID"
   }
 }
 JSONEOF
@@ -205,7 +205,7 @@ put_kv "wallets" /tmp/_kv_seed_val
 cat > /tmp/_kv_seed_val <<'JSONEOF'
 {
   "tools": [
-    { "name": "send_telegram", "description": "Post a message to the Telegram channel", "input": { "text": "required", "parse_mode": "Markdown | HTML" } },
+    { "name": "send_slack", "description": "Post a message to the Slack channel", "input": { "text": "required", "channel": "optional — override default channel" } },
     { "name": "web_fetch", "description": "Fetch contents of a URL", "input": { "url": "required", "method": "GET|POST", "headers": "optional", "max_length": "default 10000" } },
     { "name": "kv_read", "description": "Read a value from memory (any key)", "input": { "key": "required" } },
     { "name": "kv_write", "description": "Write to tool's own KV namespace", "input": { "key": "required", "value": "required" } },
@@ -240,7 +240,7 @@ put_kv "provider:wallet_balance:meta" /tmp/_kv_seed_val
 echo ""
 echo "--- Tools ---"
 
-for tool in send_telegram web_fetch kv_read kv_write check_or_balance check_wallet_balance topup_openrouter kv_manifest; do
+for tool in send_slack web_fetch kv_read kv_write check_or_balance check_wallet_balance topup_openrouter kv_manifest; do
   put_kv "tool:${tool}:code" "tools/${tool}.js" text
   node -e "import('./tools/${tool}.js').then(m=>process.stdout.write(JSON.stringify(m.meta)))" > /tmp/_kv_seed_val
   put_kv "tool:${tool}:meta" /tmp/_kv_seed_val
@@ -333,12 +333,11 @@ echo "--- Kernel Config ---"
 
 cat > /tmp/_kv_seed_val <<'JSONEOF'
 {
-  "url": "https://api.telegram.org/bot{{TELEGRAM_BOT_TOKEN}}/sendMessage",
-  "headers": { "Content-Type": "application/json" },
+  "url": "https://slack.com/api/chat.postMessage",
+  "headers": { "Content-Type": "application/json", "Authorization": "Bearer {{SLACK_BOT_TOKEN}}" },
   "body_template": {
-    "chat_id": "{{TELEGRAM_CHAT_ID}}",
-    "text": "[Swayambhu] {{event}}: {{message}}",
-    "parse_mode": "HTML"
+    "channel": "{{SLACK_CHANNEL_ID}}",
+    "text": "[Swayambhu] {{event}}: {{message}}"
   }
 }
 JSONEOF

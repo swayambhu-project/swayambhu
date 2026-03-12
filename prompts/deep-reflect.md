@@ -12,10 +12,6 @@ You have tools available for investigation — use kv_read, web_fetch, etc. to g
 
 ---
 
-## Your dharma
-
-{{dharma}}
-
 ## Your accumulated wisdom
 
 {{wisdom}}
