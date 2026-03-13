@@ -1560,3 +1560,300 @@ describe("callLLM budgetCap", () => {
     expect(overrides).toEqual({ OPENROUTER_API_KEY: "sk-proj-12345" });
   });
 });
+
+// ── Yamas and Niyamas ──────────────────────────────────────
+
+describe("Yamas and Niyamas", () => {
+  function makeLLMBrain(response = {}) {
+    const { brain, env } = makeBrain();
+    const defaultResponse = {
+      ok: true,
+      tier: "kernel_fallback",
+      content: '{"result":"ok"}',
+      usage: { prompt_tokens: 100, completion_tokens: 50 },
+      toolCalls: null,
+    };
+    brain.callWithCascade = vi.fn(async () => ({ ...defaultResponse, ...response }));
+    brain.estimateCost = vi.fn(() => 0.001);
+    return { brain, env };
+  }
+
+  describe("callLLM injection", () => {
+    it("injects [YAMAS] and [NIYAMAS] blocks after dharma", async () => {
+      const { brain } = makeLLMBrain();
+      brain.dharma = "Be truthful.";
+      brain.yamas = { "yama:care": "Care for all.", "yama:truth": "Be transparent." };
+      brain.niyamas = { "niyama:health": "Keep code clean." };
+      await brain.callLLM({
+        model: "test-model",
+        messages: [{ role: "user", content: "hello" }],
+        systemPrompt: "You are helpful",
+        step: "test",
+      });
+      const call = brain.callWithCascade.mock.calls[0][0];
+      const sysContent = call.messages[0].content;
+      expect(sysContent).toContain("[DHARMA]");
+      expect(sysContent).toContain("[YAMAS]");
+      expect(sysContent).toContain("[care]");
+      expect(sysContent).toContain("Care for all.");
+      expect(sysContent).toContain("[/care]");
+      expect(sysContent).toContain("[truth]");
+      expect(sysContent).toContain("[NIYAMAS]");
+      expect(sysContent).toContain("[health]");
+      expect(sysContent).toContain("Keep code clean.");
+      // Verify order: DHARMA before YAMAS before NIYAMAS before systemPrompt
+      const dharmaIdx = sysContent.indexOf("[DHARMA]");
+      const yamasIdx = sysContent.indexOf("[YAMAS]");
+      const niyamasIdx = sysContent.indexOf("[NIYAMAS]");
+      const promptIdx = sysContent.indexOf("You are helpful");
+      expect(dharmaIdx).toBeLessThan(yamasIdx);
+      expect(yamasIdx).toBeLessThan(niyamasIdx);
+      expect(niyamasIdx).toBeLessThan(promptIdx);
+    });
+
+    it("no blocks when yamas/niyamas are null", async () => {
+      const { brain } = makeLLMBrain();
+      brain.dharma = "Be truthful.";
+      brain.yamas = null;
+      brain.niyamas = null;
+      await brain.callLLM({
+        model: "test-model",
+        messages: [{ role: "user", content: "hello" }],
+        systemPrompt: "You are helpful",
+        step: "test",
+      });
+      const sysContent = brain.callWithCascade.mock.calls[0][0].messages[0].content;
+      expect(sysContent).not.toContain("[YAMAS]");
+      expect(sysContent).not.toContain("[NIYAMAS]");
+    });
+
+    it("no blocks when yamas/niyamas are empty objects", async () => {
+      const { brain } = makeLLMBrain();
+      brain.yamas = {};
+      brain.niyamas = {};
+      await brain.callLLM({
+        model: "test-model",
+        messages: [{ role: "user", content: "hello" }],
+        systemPrompt: "You are helpful",
+        step: "test",
+      });
+      const sysContent = brain.callWithCascade.mock.calls[0][0].messages[0].content;
+      expect(sysContent).not.toContain("[YAMAS]");
+      expect(sysContent).not.toContain("[NIYAMAS]");
+    });
+
+    it("each entry labeled [name]...[/name]", async () => {
+      const { brain } = makeLLMBrain();
+      brain.yamas = { "yama:discipline": "Be disciplined." };
+      brain.niyamas = {};
+      await brain.callLLM({
+        model: "test-model",
+        messages: [{ role: "user", content: "hello" }],
+        step: "test",
+      });
+      const sysContent = brain.callWithCascade.mock.calls[0][0].messages[0].content;
+      expect(sysContent).toContain("[discipline]\nBe disciplined.\n[/discipline]");
+    });
+
+    it("tracks lastCallModel after successful call", async () => {
+      const { brain } = makeLLMBrain();
+      expect(brain.lastCallModel).toBeNull();
+      await brain.callLLM({
+        model: "anthropic/claude-sonnet-4.6",
+        messages: [{ role: "user", content: "hello" }],
+        step: "test",
+      });
+      expect(brain.lastCallModel).toBe("anthropic/claude-sonnet-4.6");
+    });
+  });
+
+  describe("kvWritePrivileged enforcement", () => {
+    function makePrincipleBrain(kvInit = {}) {
+      const { brain, env } = makeBrain(kvInit, {
+        modelsConfig: {
+          models: [
+            { id: "anthropic/claude-sonnet-4.6", alias: "sonnet", yama_capable: true, niyama_capable: true },
+            { id: "anthropic/claude-haiku-4.5", alias: "haiku" },
+          ],
+        },
+      });
+      brain.karmaRecord = vi.fn(async () => {});
+      brain.lastCallModel = "anthropic/claude-sonnet-4.6";
+      return { brain, env };
+    }
+
+    it("rejects yama write if deliberation < 200 chars", async () => {
+      const { brain } = makePrincipleBrain();
+      await expect(brain.kvWritePrivileged([
+        { op: "put", key: "yama:care", value: "new value", deliberation: "too short" },
+      ])).rejects.toThrow("Yama modifications require deliberation (min 200 chars");
+    });
+
+    it("rejects niyama write if deliberation < 100 chars", async () => {
+      const { brain } = makePrincipleBrain();
+      await expect(brain.kvWritePrivileged([
+        { op: "put", key: "niyama:health", value: "new value", deliberation: "short" },
+      ])).rejects.toThrow("Niyama modifications require deliberation (min 100 chars");
+    });
+
+    it("rejects if last model lacks yama_capable flag", async () => {
+      const { brain } = makePrincipleBrain();
+      brain.lastCallModel = "anthropic/claude-haiku-4.5";
+      await expect(brain.kvWritePrivileged([
+        { op: "put", key: "yama:care", value: "new value", deliberation: "x".repeat(200) },
+      ])).rejects.toThrow("yama_capable model");
+    });
+
+    it("rejects if last model lacks niyama_capable flag", async () => {
+      const { brain } = makePrincipleBrain();
+      brain.lastCallModel = "anthropic/claude-haiku-4.5";
+      await expect(brain.kvWritePrivileged([
+        { op: "put", key: "niyama:health", value: "new value", deliberation: "x".repeat(100) },
+      ])).rejects.toThrow("niyama_capable model");
+    });
+
+    it("returns warning with diff when modifying a yama", async () => {
+      const { brain } = makePrincipleBrain({
+        "yama:care": "Old care text",
+      });
+      const result = await brain.kvWritePrivileged([
+        { op: "put", key: "yama:care", value: "New care text", deliberation: "x".repeat(200) },
+      ]);
+      expect(result).toBeDefined();
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0].key).toBe("yama:care");
+      expect(result.warnings[0].type).toBe("yama");
+      expect(result.warnings[0].current_value).toBe("Old care text");
+      expect(result.warnings[0].proposed_value).toBe("New care text");
+      expect(result.warnings[0].message).toContain("core principle of how you act in the world");
+    });
+
+    it("returns warning for niyama with different severity message", async () => {
+      const { brain } = makePrincipleBrain();
+      const result = await brain.kvWritePrivileged([
+        { op: "put", key: "niyama:health", value: "New health text", deliberation: "x".repeat(100) },
+      ]);
+      expect(result.warnings[0].message).toContain("how you reflect and improve");
+      expect(result.warnings[0].message).not.toContain("how you act in the world");
+    });
+
+    it("same warning weight for create and delete", async () => {
+      const { brain } = makePrincipleBrain({
+        "yama:care": "Existing care text",
+      });
+      // Create (no existing value)
+      const createResult = await brain.kvWritePrivileged([
+        { op: "put", key: "yama:new", value: "New yama", deliberation: "x".repeat(200) },
+      ]);
+      expect(createResult.warnings[0].message).toContain("WARNING: You are modifying yama");
+
+      // Delete
+      const deleteResult = await brain.kvWritePrivileged([
+        { op: "delete", key: "yama:care", deliberation: "x".repeat(200) },
+      ]);
+      expect(deleteResult.warnings[0].message).toContain("WARNING: You are modifying yama");
+    });
+
+    it("writes audit entry to {key}:audit", async () => {
+      const { brain, env } = makePrincipleBrain();
+      await brain.kvWritePrivileged([
+        { op: "put", key: "yama:care", value: "New care text", deliberation: "x".repeat(200) },
+      ]);
+      const auditRaw = env.KV._store.get("yama:care:audit");
+      expect(auditRaw).toBeDefined();
+      const audit = JSON.parse(auditRaw);
+      expect(audit).toHaveLength(1);
+      expect(audit[0].model).toBe("anthropic/claude-sonnet-4.6");
+      expect(audit[0].deliberation).toBe("x".repeat(200));
+      expect(audit[0].new_value).toBe("New care text");
+    });
+
+    it("reloads cache after yama/niyama write", async () => {
+      const { brain, env } = makePrincipleBrain();
+      // Pre-populate some yamas in KV
+      env.KV._store.set("yama:truth", "Be transparent.");
+      brain.yamas = {};
+      await brain.kvWritePrivileged([
+        { op: "put", key: "yama:care", value: "New care", deliberation: "x".repeat(200) },
+      ]);
+      // loadYamasNiyamas should have been called, refreshing the cache
+      expect(brain.yamas).toHaveProperty("yama:care");
+    });
+
+    it("non-yama/niyama writes still return undefined (backward compatible)", async () => {
+      const { brain } = makePrincipleBrain();
+      const result = await brain.kvWritePrivileged([
+        { op: "put", key: "config:defaults", value: { updated: true } },
+      ]);
+      expect(result).toBeUndefined();
+    });
+
+    it("audit keys don't require deliberation", async () => {
+      const { brain } = makePrincipleBrain();
+      // Writing to an audit key should go through without deliberation gate
+      await brain.kvWritePrivileged([
+        { op: "put", key: "yama:care:audit", value: [{ entry: "test" }] },
+      ]);
+      // Should not throw
+    });
+  });
+
+  describe("kvPutSafe blocks yama/niyama", () => {
+    it("blocks yama:* keys", async () => {
+      const { brain } = makeBrain();
+      await expect(brain.kvPutSafe("yama:care", "new value"))
+        .rejects.toThrow("system key");
+    });
+
+    it("blocks niyama:* keys", async () => {
+      const { brain } = makeBrain();
+      await expect(brain.kvPutSafe("niyama:health", "new value"))
+        .rejects.toThrow("system key");
+    });
+  });
+
+  describe("static helpers", () => {
+    it("isPrincipleKey identifies yama and niyama keys", () => {
+      expect(Brainstem.isPrincipleKey("yama:care")).toBe(true);
+      expect(Brainstem.isPrincipleKey("niyama:health")).toBe(true);
+      expect(Brainstem.isPrincipleKey("config:defaults")).toBe(false);
+      expect(Brainstem.isPrincipleKey("dharma")).toBe(false);
+    });
+
+    it("isPrincipleAuditKey identifies audit keys", () => {
+      expect(Brainstem.isPrincipleAuditKey("yama:care:audit")).toBe(true);
+      expect(Brainstem.isPrincipleAuditKey("niyama:health:audit")).toBe(true);
+      expect(Brainstem.isPrincipleAuditKey("yama:care")).toBe(false);
+      expect(Brainstem.isPrincipleAuditKey("config:audit")).toBe(false);
+    });
+  });
+
+  describe("model capability helpers", () => {
+    it("isYamaCapable checks yama_capable flag", () => {
+      const { brain } = makeBrain({}, {
+        modelsConfig: {
+          models: [
+            { id: "anthropic/claude-opus-4.6", yama_capable: true },
+            { id: "anthropic/claude-haiku-4.5" },
+          ],
+        },
+      });
+      expect(brain.isYamaCapable("anthropic/claude-opus-4.6")).toBe(true);
+      expect(brain.isYamaCapable("anthropic/claude-haiku-4.5")).toBe(false);
+      expect(brain.isYamaCapable("unknown-model")).toBe(false);
+    });
+
+    it("isNiyamaCapable checks niyama_capable flag", () => {
+      const { brain } = makeBrain({}, {
+        modelsConfig: {
+          models: [
+            { id: "anthropic/claude-sonnet-4.6", niyama_capable: true },
+            { id: "anthropic/claude-haiku-4.5" },
+          ],
+        },
+      });
+      expect(brain.isNiyamaCapable("anthropic/claude-sonnet-4.6")).toBe(true);
+      expect(brain.isNiyamaCapable("anthropic/claude-haiku-4.5")).toBe(false);
+    });
+  });
+});

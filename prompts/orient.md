@@ -22,3 +22,5 @@ as a JSON object:
 
 kv_operations: array of {op: "put"|"delete", key, value} for unprotected keys.
 Protected keys (prompts, config, wisdom) require mutation_requests via reflect.
+Yamas and niyamas (`yama:*`, `niyama:*`) are kernel-injected into every prompt
+and require deliberation + a capable model to modify via kvWritePrivileged.

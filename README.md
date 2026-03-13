@@ -64,6 +64,8 @@ Self-modification is the point. But ungoverned self-modification is how you bric
 
 **The dharma.** One key in the store is immutable — the runtime physically prevents it from being overwritten. This is Swayambhu's foundational identity: his values, his relationship with his creator, his core constraints. Everything else can orbit, evolve, and restructure, but it can't drift away from this fixed attractor.
 
+**Yamas and niyamas.** Operating principles that sit between immutable dharma and mutable config. Yamas (`yama:*`) govern how Swayambhu engages the outer world; niyamas (`niyama:*`) govern inner practice. They're kernel-injected into every LLM prompt like dharma, but mutable — with friction. Modifications require a deliberation field (min 200 chars for yamas, 100 for niyamas), a capable model, and produce an audit trail. The kernel enforces all of this; the hook can't bypass it.
+
 **Protected keys.** All writes from the agent loop pass through a protection gate. System keys — prompts, config, tools, credentials, the wisdom document — are blocked from direct writes. They can only be modified through the mutation protocol. Agent-created data keys pass through freely.
 
 **The mutation protocol.** Changes to protected keys go through a staged lifecycle. Session reflect proposes mutations, which are staged. Deep reflect reviews staged mutations and issues verdicts: apply, reject, modify, defer, or withdraw. Applied mutations become candidates — the changes take effect, but old values are snapshotted for rollback. Only after deep reflect explicitly promotes a candidate does the snapshot get deleted and the change become permanent. Deep reflect's own mutations skip staging and become candidates immediately — it's the highest-trust context.

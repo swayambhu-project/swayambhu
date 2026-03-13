@@ -75,6 +75,7 @@ export default {
     brain.modelsConfig = await brain.kvGet("config:models");
     brain.dharma = await brain.kvGet("dharma");
     brain.toolRegistry = await brain.kvGet("config:tool_registry");
+    await brain.loadYamasNiyamas();
 
     const adapter = {
       sendReply: async (chatId, text) => {
@@ -104,6 +105,8 @@ class DevBrainstem extends Brainstem {
   async getModelsConfig() { return this.modelsConfig; }
   async getDharma()       { return this.dharma; }
   async getToolRegistry() { return this.toolRegistry; }
+  async getYamas()        { return this.yamas; }
+  async getNiyamas()      { return this.niyamas; }
   async kvList(opts)      { return this.kv.list(opts); }
   async isSystemKey(key)  { return Brainstem.isSystemKey(key); }
 
@@ -119,6 +122,7 @@ class DevBrainstem extends Brainstem {
     this.modelsConfig = await this.kvGet("config:models");
     this.dharma = await this.kvGet("dharma");
     this.toolRegistry = await this.kvGet("config:tool_registry");
+    await this.loadYamasNiyamas();
 
     console.log(`[HOOK] Calling wake() for session ${this.sessionId}`);
     const result = await wake(this, { sessionId: this.sessionId });

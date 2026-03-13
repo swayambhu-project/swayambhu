@@ -149,6 +149,14 @@ Mutations support a `patch` op (`{ op: "patch", key, old_string, new_string }`)
 for surgical find-and-replace edits within a KV value. Rejects if old_string
 is missing or ambiguous. Rollback restores the full pre-patch snapshot.
 
+### Yamas and Niyamas (operating principles)
+
+`yama:*` (outer world) and `niyama:*` (inner world) keys in KV. Kernel-injected
+into every LLM prompt after dharma. Mutable via `kvWritePrivileged` but with
+kernel-enforced friction: requires `deliberation` field (min 200 chars for yamas,
+100 for niyamas) and a `yama_capable/niyama_capable` model. Audit trail at
+`{key}:audit`.
+
 ### Tools and providers
 
 Tool code lives in `tools/*.js`, provider adapters in `providers/*.js`.

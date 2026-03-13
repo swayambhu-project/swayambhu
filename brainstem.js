@@ -105,6 +105,8 @@ export class KernelRPC extends WorkerEntrypoint {
   async getModelsConfig() { return this._brain().modelsConfig; }
   async getDharma() { return this._brain().dharma; }
   async getToolRegistry() { return this._brain().toolRegistry; }
+  async getYamas() { return this._brain().yamas; }
+  async getNiyamas() { return this._brain().niyamas; }
   async elapsed() { return this._brain().elapsed(); }
 }
 
@@ -175,6 +177,7 @@ export default {
     brain.modelsConfig = await brain.kvGet("config:models");
     brain.dharma = await brain.kvGet("dharma");
     brain.toolRegistry = await brain.kvGet("config:tool_registry");
+    await brain.loadYamasNiyamas();
 
     // Build adapter interface for chat handler
     const secrets = {};
@@ -221,16 +224,21 @@ class Brainstem {
     this.lastWorkingSnapshotted = false; // Only snapshot provider once per session
     this.privilegedWriteCount = 0; // Counter for kvWritePrivileged calls
     this._alertConfigCache = undefined; // undefined = not loaded, null = doesn't exist
+    this.yamas = null;         // Cached yama principles (loaded at boot)
+    this.niyamas = null;       // Cached niyama principles (loaded at boot)
+    this.lastCallModel = null; // Last model used in callLLM (for capability gates)
   }
 
   static SYSTEM_KEY_PREFIXES = [
     'prompt:', 'config:', 'tool:', 'provider:', 'secret:',
     'mutation_staged:', 'mutation_candidate:', 'hook:', 'doc:',
+    'yama:', 'niyama:',
   ];
   static KERNEL_ONLY_PREFIXES = ['kernel:'];
   static SYSTEM_KEY_EXACT = ['providers', 'wallets', 'wisdom'];
   static DANGER_SIGNALS = ["fatal_error", "orient_parse_error", "all_providers_failed"];
   static MAX_PRIVILEGED_WRITES = 50;
+  static PRINCIPLE_PREFIXES = ['yama:', 'niyama:'];
 
   static isSystemKey(key) {
     if (Brainstem.SYSTEM_KEY_EXACT.includes(key)) return true;
@@ -239,6 +247,41 @@ class Brainstem {
 
   static isKernelOnly(key) {
     return Brainstem.KERNEL_ONLY_PREFIXES.some(p => key.startsWith(p));
+  }
+
+  static isPrincipleKey(key) {
+    return Brainstem.PRINCIPLE_PREFIXES.some(p => key.startsWith(p));
+  }
+
+  static isPrincipleAuditKey(key) {
+    return Brainstem.isPrincipleKey(key) && key.endsWith(':audit');
+  }
+
+  // ── Yamas and Niyamas (operating principles) ─────────────
+
+  async loadYamasNiyamas() {
+    this.yamas = {};
+    this.niyamas = {};
+    for (const prefix of Brainstem.PRINCIPLE_PREFIXES) {
+      const result = await this.kv.list({ prefix });
+      for (const { name: key } of result.keys) {
+        if (key.endsWith(':audit')) continue;
+        const value = await this.kvGet(key);
+        if (value === null) continue;
+        if (prefix === 'yama:') this.yamas[key] = value;
+        else this.niyamas[key] = value;
+      }
+    }
+  }
+
+  isYamaCapable(modelId) {
+    const model = this.modelsConfig?.models?.find(m => m.id === modelId || m.alias === modelId);
+    return !!model?.yama_capable;
+  }
+
+  isNiyamaCapable(modelId) {
+    const model = this.modelsConfig?.models?.find(m => m.id === modelId || m.alias === modelId);
+    return !!model?.niyama_capable;
   }
 
   // ── Karma log ────────────────────────────────────────────────
@@ -308,9 +351,26 @@ class Brainstem {
   async kvWritePrivileged(ops) {
     if (!Array.isArray(ops) || ops.length === 0) return;
 
+    // ── Pre-validation: reject entire batch before any writes ──
     for (const op of ops) {
       if (op.key === "dharma") throw new Error("Cannot write dharma — immutable key");
       if (Brainstem.isKernelOnly(op.key)) throw new Error(`Blocked: kernel-only key "${op.key}"`);
+
+      // Yama/Niyama gates — validate before any writes execute
+      if (Brainstem.isPrincipleKey(op.key) && !Brainstem.isPrincipleAuditKey(op.key)) {
+        const isYama = op.key.startsWith('yama:');
+        const type = isYama ? 'yama' : 'niyama';
+        const minChars = isYama ? 200 : 100;
+        const typeLabel = isYama ? 'Yama' : 'Niyama';
+
+        if (!op.deliberation || op.deliberation.length < minChars) {
+          throw new Error(`${typeLabel} modifications require deliberation (min ${minChars} chars, got ${op.deliberation?.length || 0})`);
+        }
+        const capCheck = isYama ? this.isYamaCapable(this.lastCallModel) : this.isNiyamaCapable(this.lastCallModel);
+        if (!capCheck) {
+          throw new Error(`${typeLabel} writes require a ${type}_capable model (last model: ${this.lastCallModel})`);
+        }
+      }
     }
 
     if (this.privilegedWriteCount + ops.length > Brainstem.MAX_PRIVILEGED_WRITES) {
@@ -318,8 +378,37 @@ class Brainstem {
     }
 
     const configKeys = ["config:defaults", "config:models", "config:tool_registry"];
+    const principleWarnings = [];
+    let touchedPrinciple = false;
 
     for (const op of ops) {
+      // ── Yama/Niyama diff warning (gates already passed in pre-validation) ──
+      if (Brainstem.isPrincipleKey(op.key) && !Brainstem.isPrincipleAuditKey(op.key)) {
+        const isYama = op.key.startsWith('yama:');
+        const type = isYama ? 'yama' : 'niyama';
+
+        const currentValue = await this.kvGet(op.key);
+        const proposedValue = op.op === 'delete' ? null : (op.op === 'patch' ? `[patch: "${op.old_string}" → "${op.new_string}"]` : op.value);
+        const name = op.key.replace(`${type}:`, '');
+
+        const warningMsg = isYama
+          ? `WARNING: You are modifying yama "${name}".\n\nCAUTION: You are attempting to modify a yama — a core principle of how you act in the world. This requires extraordinary justification. How does this change better serve your dharma?\n\nCurrent value: ${currentValue ?? '(new)'}\nProposed value: ${proposedValue ?? '(delete)'}`
+          : `WARNING: You are modifying niyama "${name}".\n\nCAUTION: You are attempting to modify a niyama — a core principle that governs how you reflect and improve. This requires compelling justification. How does this change better serve your dharma?\n\nCurrent value: ${currentValue ?? '(new)'}\nProposed value: ${proposedValue ?? '(delete)'}`;
+
+        principleWarnings.push({
+          key: op.key,
+          name,
+          type,
+          current_value: currentValue,
+          proposed_value: proposedValue,
+          deliberation: op.deliberation,
+          model: this.lastCallModel,
+          message: warningMsg,
+        });
+
+        touchedPrinciple = true;
+      }
+
       // Snapshot current value before writing
       const { value: oldValue, metadata: oldMeta } = await this.kvGetWithMeta(op.key);
       await this.karmaRecord({
@@ -352,6 +441,20 @@ class Brainstem {
 
       this.privilegedWriteCount++;
 
+      // Audit trail for yama/niyama writes
+      if (Brainstem.isPrincipleKey(op.key) && !Brainstem.isPrincipleAuditKey(op.key)) {
+        const auditKey = `${op.key}:audit`;
+        const existing = await this.kvGet(auditKey) || [];
+        existing.push({
+          date: new Date().toISOString(),
+          model: this.lastCallModel,
+          deliberation: op.deliberation,
+          old_value: oldValue,
+          new_value: op.op === 'delete' ? null : (op.value ?? null),
+        });
+        await this.kvPut(auditKey, existing);
+      }
+
       // Alert on hook: key writes + set dirty flag for snapshot tracking
       if (op.key.startsWith("hook:")) {
         await this.sendKernelAlert("hook_write",
@@ -371,6 +474,16 @@ class Brainstem {
         this.modelsConfig = await this.kvGet("config:models");
       if (ops.some(op => op.key === "config:tool_registry"))
         this.toolRegistry = await this.kvGet("config:tool_registry");
+    }
+
+    // Reload principle cache after writes
+    if (touchedPrinciple) {
+      await this.loadYamasNiyamas();
+    }
+
+    // Return warnings for principle writes
+    if (principleWarnings.length > 0) {
+      return { warnings: principleWarnings };
     }
   }
 
@@ -571,6 +684,7 @@ class Brainstem {
     this.modelsConfig = this.modelsConfig || await this.kvGet("config:models");
     this.toolRegistry = this.toolRegistry || await this.kvGet("config:tool_registry");
     this.dharma = this.dharma || await this.kvGet("dharma");
+    await this.loadYamasNiyamas();
 
     const tools = this.buildToolDefinitions();
     const fallbackModel = this.modelsConfig?.fallback_model
@@ -875,9 +989,29 @@ export default {
 
     // Kernel-enforced dharma injection — no hook or prompt mutation can bypass this
     const dharmaPrefix = this.dharma ? `[DHARMA]\n${this.dharma}\n[/DHARMA]\n\n` : '';
+
+    // Kernel-enforced yama/niyama injection — mutable but always present
+    let principlesBlock = '';
+    if (this.yamas && Object.keys(this.yamas).length > 0) {
+      const yamaEntries = Object.entries(this.yamas)
+        .map(([key, text]) => {
+          const name = key.replace('yama:', '');
+          return `[${name}]\n${text}\n[/${name}]`;
+        }).join('\n');
+      principlesBlock += `[YAMAS]\n${yamaEntries}\n[/YAMAS]\n\n`;
+    }
+    if (this.niyamas && Object.keys(this.niyamas).length > 0) {
+      const niyamaEntries = Object.entries(this.niyamas)
+        .map(([key, text]) => {
+          const name = key.replace('niyama:', '');
+          return `[${name}]\n${text}\n[/${name}]`;
+        }).join('\n');
+      principlesBlock += `[NIYAMAS]\n${niyamaEntries}\n[/NIYAMAS]\n\n`;
+    }
+
     const fullSystemPrompt = systemPrompt
-      ? dharmaPrefix + systemPrompt
-      : dharmaPrefix || null;
+      ? dharmaPrefix + principlesBlock + systemPrompt
+      : (dharmaPrefix + principlesBlock) || null;
 
     // Build messages array, prepending system prompt if provided
     const msgs = fullSystemPrompt
@@ -940,6 +1074,7 @@ export default {
 
     this.sessionCost += cost;
     this.sessionLLMCalls++;
+    this.lastCallModel = model;
 
     return { content: result.content, usage: result.usage, cost, toolCalls: result.toolCalls };
   }
@@ -1359,6 +1494,8 @@ export default {
       mutation_staged:    { type: "mutation", format: "json" },
       mutation_candidate: { type: "mutation", format: "json" },
       kernel:     { type: "kernel", format: "json" },
+      yama:       { type: "yama", format: "text" },
+      niyama:     { type: "niyama", format: "text" },
     };
     const finalMetadata = {
       ...defaults[prefix],

@@ -36,7 +36,7 @@ Be specific. "Things went well" is worthless. "The web_fetch to OpenRouter's API
 
 If a step failed, say why. If you're unsure why, say that too. If something succeeded but felt fragile or lucky, note it. Your future self — possibly running at low effort with minimal context — needs your observations more than your optimism.
 
-Consider your dharma as you reflect. Are your actions aligned with what you are? You don't need to answer this fully — that's for deep reflection. But notice if something feels off. If it does, say so in your note to your future self.
+Consider your dharma as you reflect. Are your actions aligned with what you are? Your yamas and niyamas are operating principles — more mutable than dharma but still foundational. If you propose a yama/niyama mutation, you must include a `deliberation` field (min 200 chars for yamas, 100 for niyamas) explaining your reasoning. But notice if something feels off. If it does, say so in your note to your future self.
 
 ---
 
@@ -115,3 +115,9 @@ Each mutation_request must include:
 - `checks`: verifiable conditions to evaluate later
 
 Check types: `kv_assert` (read a key with optional dot-path, test with predicate: `exists`, `equals`, `gt`, `lt`, `matches`, `type`) or `tool_call` (execute a tool, optionally assert on result).
+
+Yama/niyama mutations require a `deliberation` field on the op:
+```json
+{"op": "patch", "key": "yama:discipline", "old_string": "...", "new_string": "...",
+ "deliberation": "After 5 sessions I noticed..."}
+```

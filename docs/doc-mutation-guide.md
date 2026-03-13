@@ -8,6 +8,14 @@ Every KV key falls into one of three tiers:
 
 **Kernel-only** (`kernel:*` and `dharma`): You cannot write these. Both `kvPutSafe` and `kvWritePrivileged` will reject the write. These keys are maintained exclusively by the kernel. They include your crash history (`kernel:last_sessions`), alert configuration (`kernel:alert_config`), the last known good hook snapshot (`kernel:last_good_hook`), and your dharma. You can read them.
 
+**Yamas and Niyamas** (`yama:*`, `niyama:*`): Operating principles — more mutable than dharma but with kernel-enforced friction. Blocked from `kvPutSafe` (system keys). Writable via `kvWritePrivileged` but with additional gates:
+- **Deliberation required**: each op must include a `deliberation` field (min 200 chars for yamas, 100 for niyamas) or the write is rejected.
+- **Model gate**: the last model used in `callLLM` must have `yama_capable: true` (for yamas) or `niyama_capable: true` (for niyamas) in `config:models`.
+- **Audit trail**: every write appends to `{key}:audit` (e.g. `yama:care:audit`) with date, model, deliberation, old/new values.
+- **Diff warning**: the kernel returns a warning object with current vs proposed values.
+
+Audit keys (`yama:*:audit`, `niyama:*:audit`) are also system keys but do not require deliberation — the kernel writes them automatically.
+
 **System keys** (`config:*`, `prompt:*`, `hook:*`, `tool:*`, `provider:*`, `secret:*`, `mutation_staged:*`, `mutation_candidate:*`, and exact keys `providers`, `wallets`, `wisdom`): You cannot write these via `kvPutSafe`. You must use `kvWritePrivileged`, which snapshots the old value to karma before writing. This is the path the mutation protocol uses.
 
 **Regular keys** (`reflect:*`, `wake_config`, `last_reflect`, `session_counter`, `tooldata:*`, etc.): Writable via `kvPutSafe`. No special protection needed.

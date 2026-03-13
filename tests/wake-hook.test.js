@@ -738,7 +738,30 @@ describe("patch op", () => {
   });
 });
 
-// ── 19. applyStagedAsCandidate with patch op ────────────────
+// ── 19. applyKVOperation blocks yama/niyama (system keys) ───
+
+describe("applyKVOperation blocks yama/niyama", () => {
+  it("blocks yama: prefix as system key", async () => {
+    const K = makeMockK();
+    await applyKVOperation(K, { op: "put", key: "yama:care", value: "new value" });
+    expect(K.karmaRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "mutation_blocked", key: "yama:care", reason: "system_key" })
+    );
+    // Should NOT have written the value
+    expect(K.kvPutSafe).not.toHaveBeenCalled();
+  });
+
+  it("blocks niyama: prefix as system key", async () => {
+    const K = makeMockK();
+    await applyKVOperation(K, { op: "put", key: "niyama:health", value: "new value" });
+    expect(K.karmaRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "mutation_blocked", key: "niyama:health", reason: "system_key" })
+    );
+    expect(K.kvPutSafe).not.toHaveBeenCalled();
+  });
+});
+
+// ── 20. applyStagedAsCandidate with patch op ────────────────
 
 describe("applyStagedAsCandidate with patch op", () => {
   it("forwards patch ops through to kvWritePrivileged", async () => {

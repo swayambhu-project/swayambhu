@@ -44,7 +44,7 @@ Every kernel capability the hook uses goes through `K`. The methods:
 
 **Karma**: `K.karmaRecord(entry)` — appends to the session's karma log and flushes to KV.
 
-**State**: `K.getSessionId()`, `K.getSessionCost()`, `K.getKarma()`, `K.getDefaults()`, `K.getModelsConfig()`, `K.getDharma()`, `K.getToolRegistry()`, `K.elapsed()`.
+**State**: `K.getSessionId()`, `K.getSessionCost()`, `K.getKarma()`, `K.getDefaults()`, `K.getModelsConfig()`, `K.getDharma()`, `K.getToolRegistry()`, `K.getYamas()`, `K.getNiyamas()`, `K.elapsed()`.
 
 **Utility**: `K.resolveModel(alias)`, `K.estimateCost(model, usage)`, `K.buildPrompt(template, vars)`, `K.parseAgentOutput(content)`, `K.loadKeys(keys)`, `K.getSessionCount()`, `K.mergeDefaults(defaults, overrides)`, `K.isSystemKey(key)`.
 
@@ -154,6 +154,12 @@ Each cron invocation has a **15-minute wall-clock limit** regardless of cron int
 - `kernel:alert_config` — alerting configuration (URL template, body template, headers)
 - `kernel:llm_fallback` + `:meta` — Tier 3 LLM adapter
 - `kernel:fallback_model` — fallback model string
+
+### Yamas and Niyamas (writable via kvWritePrivileged with deliberation + model gate)
+- `yama:{name}` — outer world operating principles (e.g. `yama:care`, `yama:truth`)
+- `yama:{name}:audit` — audit trail for yama modifications (JSON array)
+- `niyama:{name}` — inner world operating principles (e.g. `niyama:health`, `niyama:reflection`)
+- `niyama:{name}:audit` — audit trail for niyama modifications (JSON array)
 
 ### System keys (writable via kvWritePrivileged only)
 - `config:defaults` — session budgets, model configs, execution limits, reflect intervals

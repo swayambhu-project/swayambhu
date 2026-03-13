@@ -93,6 +93,8 @@ export function makeMockK(kvInit = {}, opts = {}) {
     getModelsConfig: vi.fn(async () => opts.modelsConfig || null),
     getDharma: vi.fn(async () => opts.dharma || null),
     getToolRegistry: vi.fn(async () => opts.toolRegistry || null),
+    getYamas: vi.fn(async () => opts.yamas || null),
+    getNiyamas: vi.fn(async () => opts.niyamas || null),
     elapsed: vi.fn(async () => 0),
 
     // Internal — expose KV store for assertions

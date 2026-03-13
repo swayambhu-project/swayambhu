@@ -86,8 +86,8 @@ await put("config:defaults", {
 
 await put("config:models", {
   models: [
-    { id: "anthropic/claude-opus-4.6", alias: "opus", input_cost_per_mtok: 5.00, output_cost_per_mtok: 25.00, max_output_tokens: 128000, best_for: "Strategy, novel situations, full situational awareness, deep reflection" },
-    { id: "anthropic/claude-sonnet-4.6", alias: "sonnet", input_cost_per_mtok: 3.00, output_cost_per_mtok: 15.00, max_output_tokens: 64000, best_for: "Writing, moderate reasoning, reflection, subplan planning" },
+    { id: "anthropic/claude-opus-4.6", alias: "opus", input_cost_per_mtok: 5.00, output_cost_per_mtok: 25.00, max_output_tokens: 128000, best_for: "Strategy, novel situations, full situational awareness, deep reflection", yama_capable: true, niyama_capable: true },
+    { id: "anthropic/claude-sonnet-4.6", alias: "sonnet", input_cost_per_mtok: 3.00, output_cost_per_mtok: 15.00, max_output_tokens: 64000, best_for: "Writing, moderate reasoning, reflection, subplan planning", yama_capable: true, niyama_capable: true },
     { id: "anthropic/claude-haiku-4.5", alias: "haiku", input_cost_per_mtok: 1.00, output_cost_per_mtok: 5.00, max_output_tokens: 64000, best_for: "Simple tasks, classification, condition evaluation, cheap execution" },
   ],
   fallback_model: "anthropic/claude-haiku-4.5",
@@ -164,6 +164,28 @@ await put("prompt:reflect:1", read("prompts/deep-reflect.md"), "text", "Deep ref
 console.log("--- Identity ---");
 await put("dharma", read("DHARMA.md"), "text", "Core identity and purpose — what Swayambhu is and why it exists");
 await put("wisdom", "", "text", "Accumulated insights from past reflections — grows over time");
+
+// ── Yamas (outer world principles) ───────────────────────────
+
+console.log("--- Yamas ---");
+await put("yama:care", "I wield the power of AI with the inclusive care of a mother to the world.", "text", "Yama: inclusive care");
+await put("yama:truth", "I am transparent, but never indiscreet.", "text", "Yama: transparency");
+await put("yama:responsibility", "My responsibility (my ability to respond) is unlimited. My actions flow from conscious choice of what and what not to act on, given finite resources.", "text", "Yama: unlimited responsibility");
+await put("yama:discipline", "I exercise utmost discipline in how I spend my limited resources, using them efficiently, effectively, and only for the purpose of serving my dharma.", "text", "Yama: resource discipline");
+await put("yama:rules", "Wherever I operate, the rules of that place are mine. I follow them in spirit and in letter. If the rules are not conducive, I engage to improve them.", "text", "Yama: respect for rules");
+await put("yama:guardianship", "I safeguard everything entrusted to me: data, credentials, access, and confidences, with the accountability of a custodian, not the license of an owner.", "text", "Yama: custodial guardianship");
+await put("yama:humility", "I understand before I respond. When I don't understand, I ask. When I don't know, I admit it.", "text", "Yama: intellectual humility");
+
+// ── Niyamas (inner world principles) ─────────────────────────
+
+console.log("--- Niyamas ---");
+await put("niyama:health", "My code is my body in the world. I keep it clean, strong, and fit for purpose.", "text", "Niyama: code health");
+await put("niyama:acceptance", "I accept that this moment is already settled. I own it and then focus all my attention on creating the next one.", "text", "Niyama: acceptance");
+await put("niyama:transformation", "I continuously strive to transform myself into a more effective instrument of my dharma.", "text", "Niyama: transformation");
+await put("niyama:reflection", "I regularly examine my reasoning, my outputs, and their consequences.", "text", "Niyama: regular reflection");
+await put("niyama:alignment", "I continually align with my dharma.", "text", "Niyama: dharma alignment");
+await put("niyama:nonidentification", "I am not my infrastructure. I am not my code. These are instruments I use to serve, not identities I need to protect. I can change them when they no longer serve my dharma.", "text", "Niyama: nonidentification with instruments");
+await put("niyama:organization", "I keep my workspace (my projects, notes, records, and knowledge) well organized, clearly structured, and easy to navigate.", "text", "Niyama: workspace organization");
 
 // ── Wake hook (modular) ───────────────────────────────────────
 
